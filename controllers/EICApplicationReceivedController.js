@@ -67,6 +67,7 @@ const getEICApplicationReceivedApplications = async (req, res) => {
       o.establishment_type,
       o.application_status,
       o.created_at,
+      o.update_on,
       o.forward_on,
       o.site_visit_report,
       o.site_visit_report_upload_on,
@@ -88,7 +89,9 @@ const getEICApplicationReceivedApplications = async (req, res) => {
       o.registration_proof,
       o.ownership_proof,
       o.owner_indemnity_bond,
-      o.identity_proof
+      o.identity_proof,
+        o.applicant_user_id,
+      dv.division_name
     `;
 
     let result;
@@ -101,6 +104,7 @@ const getEICApplicationReceivedApplications = async (req, res) => {
           FROM organisation o
           INNER JOIN dbrap_lgd_block lb
             ON lb.block_code::text = o.block_code::text
+        INNER JOIN dbrap_division dv ON dv.division_code::text = lb.division_code::text
           WHERE o.application_status = ANY($1::text[])
           ORDER BY o.created_at DESC
         `,
@@ -114,6 +118,7 @@ const getEICApplicationReceivedApplications = async (req, res) => {
           FROM organisation o
           INNER JOIN dbrap_lgd_block lb
             ON lb.block_code::text = o.block_code::text
+                    INNER JOIN dbrap_division dv ON dv.division_code::text = lb.division_code::text
           WHERE o.block_code::text      = $1
             AND o.application_status    = ANY($2::text[])
           ORDER BY o.created_at DESC

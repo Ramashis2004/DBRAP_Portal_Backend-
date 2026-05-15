@@ -135,7 +135,7 @@ const updateConnectionDetails = async (req, res) => {
            initial_meter_reading         = NULL,
            meter_make                    = NULL,
            application_status            = 'CONNECTION_DETAILS_UPDATED',
-           connection_details_updated_on = NOW()
+           update_on = NOW()
          WHERE application_id = $4`,
         [
           "Unmetered",
@@ -155,7 +155,7 @@ const updateConnectionDetails = async (req, res) => {
            name_of_project               = NULL,
            tapping_point                 = NULL,
            application_status            = 'CONNECTION_DETAILS_UPDATED',
-           connection_details_updated_on = NOW()
+           update_on = NOW()
          WHERE application_id = $5`,
         [
           "Metered",
@@ -177,7 +177,7 @@ const updateConnectionDetails = async (req, res) => {
            initial_meter_reading         = NULL,
            meter_make                    = NULL,
            application_status            = 'CONNECTION_DETAILS_UPDATED',
-           connection_details_updated_on = NOW()
+           update_on = NOW()
          WHERE application_id = $4`,
         [
           "Unmetered",

@@ -94,7 +94,7 @@ const getSEDashboardApplications = async (req, res) => {
     const result = await pool.query(
       `
         SELECT o.application_id, o.organisation_name, o.establishment_type, o.application_status,
-               o.created_at, o.forward_on, o.site_visit_report, o.site_visit_report_upload_on, o.approved_on,
+               o.created_at, o.update_on,o.forward_on, o.site_visit_report, o.site_visit_report_upload_on, o.approved_on,
                o.district_code, o.block_code,
                o.district, o.block, o.gram_panchayat, o.village, o.habitation,
                o.name, o.gender, o.email, o.mobile_number, o.type_of_connection, o.water_requirement,

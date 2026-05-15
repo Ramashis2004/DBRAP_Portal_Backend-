@@ -477,7 +477,7 @@ const loginOfficer = async (req, res) => {
   const ipAddress = req.headers["x-forwarded-for"] || req.socket.remoteAddress || null;
   const userAgent = req.headers["user-agent"] || null;
   try {
-    const { username, password } = req.body;
+    const { username, password, forceLogin = false } = req.body;
 
     if (!username || !password) {
       return res.status(400).json({ error: "Username and password are required" });
@@ -495,6 +495,7 @@ const loginOfficer = async (req, res) => {
           um.role_id,
           um.user_type_id,
           um.active_flag,
+          COALESCE(um.is_logged, false) AS is_logged,
           COALESCE(utm.type_name, dr.role_name) AS role_name
         FROM user_master um
         LEFT JOIN user_type_master utm ON utm.id = um.user_type_id
@@ -516,6 +517,13 @@ const loginOfficer = async (req, res) => {
     if (!verifyPassword(password, officer.password)) {
       await saveLoginHistory(officer.id, officer.login_id, officer.user_name, ipAddress, userAgent, "FAILURE");
       return res.status(401).json({ error: "Invalid officer credentials" });
+    }
+
+    if (officer.is_logged && !forceLogin) {
+      return res.status(409).json({
+        code: "ALREADY_LOGGED_IN",
+        error: "This login ID is already logged in. Do you want to logout there and login here?",
+      });
     }
 
     await pool.query(
@@ -1422,7 +1430,28 @@ const logoutOfficer = async (req, res) => {
     return res.status(500).json({ error: "Server Error" });
   }
 };
+const checkSessionValid = async (req, res) => {
+  try {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ error: "User ID is required" });
 
+    const result = await pool.query(
+      `SELECT is_logged FROM user_master WHERE id = $1 LIMIT 1`,
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ valid: false });
+    }
+
+    return res.status(200).json({
+      valid: result.rows[0].is_logged === true,
+    });
+  } catch (error) {
+    console.error("checkSessionValid error:", error);
+    return res.status(500).json({ error: "Server Error" });
+  }
+};
 module.exports = {
   checkApplicantMobileAvailability,
   createOfficerUser,
@@ -1430,4 +1459,5 @@ module.exports = {
   loginOfficer,
   logoutOfficer,
   registerApplicant,
+  checkSessionValid,
 };

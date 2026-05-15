@@ -120,9 +120,9 @@ const verifyPayment = async (req, res) => {
         UPDATE organisation
         SET
           application_status      = $1::varchar,
-          money_receipt_verify_on = CASE
+          update_on = CASE
             WHEN $1::varchar = $3 THEN NOW()
-            ELSE money_receipt_verify_on
+            ELSE update_on
           END,
           remarks = COALESCE($4::varchar, remarks)
         WHERE application_id = $2
@@ -131,7 +131,7 @@ const verifyPayment = async (req, res) => {
           organisation_name,
           application_status,
           money_receipt_upload_on,
-          money_receipt_verify_on,
+          update_on,
           remarks
       `,
       [

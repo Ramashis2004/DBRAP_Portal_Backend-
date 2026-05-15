@@ -234,27 +234,26 @@ const currentResult = await pool.query(
   `
   UPDATE organisation
   SET application_status = $1::varchar,
-      forward_on = CASE
+      update_on = CASE
         WHEN $1::varchar = 'APPLICATION_FORWARDED_TO_JE' THEN NOW()
-        ELSE forward_on
+        ELSE update_on
       END,
-      approved_on = CASE
+      update_on = CASE
         WHEN $1::varchar = 'APPLICATION_APPROVED' THEN NOW()
-        ELSE approved_on
+        ELSE update_on
       END,
-      rejected_on = CASE
+      update_on = CASE
         WHEN $1::varchar = 'APPLICATION_REJECTED' THEN NOW()
-        ELSE rejected_on
+        ELSE update_on
       END,
-      return_to_je_on = CASE
+      update_on = CASE
         WHEN $1::varchar = 'APPLICATION_FORWARDED_TO_JE' AND $3::boolean = true THEN NOW()
-        ELSE return_to_je_on
+        ELSE update_on
       END,
       remarks = COALESCE($4::varchar, remarks)
   WHERE application_id = $2
   RETURNING application_id, organisation_name, application_status,
-            created_at, forward_on, site_visit_report_upload_on,
-            approved_on, rejected_on, return_to_je_on, remarks
+            created_at, update_on, remarks
   `,
   [applicationStatus, applicationId, req.body.is_return_to_je || false, req.body.remarks || null]
 );
@@ -317,9 +316,9 @@ const uploadSiteVisitReport = async (req, res) => {
         UPDATE organisation
         SET site_visit_report = $1,
             application_status = $2,
-            site_visit_report_upload_on = NOW()
+            update_on = NOW()
         WHERE application_id = $3
-        RETURNING application_id, organisation_name, application_status, site_visit_report, site_visit_report_upload_on
+        RETURNING application_id, organisation_name, application_status, site_visit_report, update_on
       `,
       [reportFile.path, APPLICATION_STATUS.JE_VERIFIED_REPORT_UPLOADED, applicationId]
     );

@@ -37,7 +37,8 @@ const findApplicantByMobile = async (mobileNo) => {
 
   const result = await pool.query(
     `
-      SELECT id, user_name, organisation_name, login_id, email_id, mobile_no, role_id, user_type_id
+      SELECT id, user_name, organisation_name, login_id, email_id, mobile_no, role_id, user_type_id,
+             COALESCE(is_logged, false) AS is_logged
       FROM user_master
       WHERE mobile_no = $1
         AND role_id = $2
@@ -97,6 +98,7 @@ const loginApplicant = async (req, res) => {
 
   try {
     const trimmedMobile = normalizeMobileNumber(req.body?.mobile_number);
+    const forceLogin = Boolean(req.body?.forceLogin);
 
     // ── FAILED: invalid mobile format ─────────────────────────────────────────
     if (!MOBILE_REGEX.test(trimmedMobile)) {
@@ -121,6 +123,18 @@ const loginApplicant = async (req, res) => {
       });
     }
 
+    if (applicant.is_logged && !forceLogin) {
+      return res.status(409).json({
+        code: "ALREADY_LOGGED_IN",
+        error: "This login ID is already logged in. Do you want to logout there and login here?",
+      });
+    }
+if (applicant.is_logged && forceLogin) {
+  await pool.query(
+    `UPDATE user_master SET is_logged = false WHERE id = $1`,
+    [applicant.id]
+  );
+}
     // ── SUCCESS ───────────────────────────────────────────────────────────────
     await pool.query(
       `UPDATE user_master SET is_logged = true WHERE id = $1`,
@@ -173,6 +187,7 @@ const loginApplicantWithPassword = async (req, res) => {
   try {
     const loginId  = String(req.body?.login_id  || "").trim();
     const password = String(req.body?.password  || "");
+    const forceLogin = Boolean(req.body?.forceLogin);
 
     if (!loginId || !password) {
       return res.status(400).json({ error: "User ID and password are required" });
@@ -191,7 +206,8 @@ const loginApplicantWithPassword = async (req, res) => {
           mobile_no,
           role_id,
           user_type_id,
-          active_flag
+          active_flag,
+          COALESCE(is_logged, false) AS is_logged
         FROM user_master
         WHERE login_id = $1
           AND role_id   = $2
@@ -218,6 +234,13 @@ const loginApplicantWithPassword = async (req, res) => {
     if (!verifyPassword(password, applicant.password)) {
       await saveLoginHistory(applicant.id, applicant.login_id, applicant.user_name, ipAddress, userAgent, "FAILURE");
       return res.status(401).json({ error: "Invalid User ID or password" });
+    }
+
+    if (applicant.is_logged && !forceLogin) {
+      return res.status(409).json({
+        code: "ALREADY_LOGGED_IN",
+        error: "This login ID is already logged in. Do you want to logout there and login here?",
+      });
     }
 
     // ── Success ────────────────────────────────────────────────────────────

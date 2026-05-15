@@ -106,7 +106,7 @@ const uploadApplicantPaymentReceipt = async (req, res) => {
          date_of_payment         = $2,
          money_receipt           = $3,
          application_status      = 'PAYMENT_RECEIPT_UPLOADED',
-         money_receipt_upload_on = NOW()
+         update_on = NOW()
        WHERE application_id    = $4
          AND applicant_user_id = $5`,
       [amount, dateOfPayment, receiptPath, applicationId, userId]

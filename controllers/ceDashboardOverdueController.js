@@ -64,7 +64,7 @@ const getCEDashboardOverdueSummary = async (req, res) => {
     const result = await pool.query(
       `${OVERDUE_CTE}
        SELECT
-         COUNT(DISTINCT CASE WHEN overdue_days >  0 AND overdue_days <  2 THEN application_id END)::int AS bucket_0_2,
+         COUNT(DISTINCT CASE WHEN overdue_days >= 1 AND overdue_days <  2 THEN application_id END)::int AS bucket_0_2,
          COUNT(DISTINCT CASE WHEN overdue_days >= 2 AND overdue_days <  5 THEN application_id END)::int AS bucket_2_5,
          COUNT(DISTINCT CASE WHEN overdue_days >= 5 AND overdue_days < 10 THEN application_id END)::int AS bucket_5_10,
          COUNT(DISTINCT CASE WHEN overdue_days >= 10                      THEN application_id END)::int AS bucket_10_plus
@@ -97,7 +97,7 @@ const getCEDashboardOverdueSummary = async (req, res) => {
 // COUNT(DISTINCT ov.application_id).
 // ─────────────────────────────────────────────────────────────────────────────
 const BUCKET_WHERE = {
-  "0_2":     "overdue_days >  0 AND overdue_days <  2",
+  "0_2":     "overdue_days >= 1 AND overdue_days <  2",
   "2_5":     "overdue_days >= 2 AND overdue_days <  5",
   "5_10":    "overdue_days >= 5 AND overdue_days < 10",
   "10_plus": "overdue_days >= 10",
@@ -217,17 +217,51 @@ const getCEDashboardOverdueApplicationHistory = async (req, res) => {
     const result = await pool.query(
       `
         SELECT
-          st.stage,
-          st.start_time,
-          COALESCE(um.user_name, st.assigned_to) AS assigned_to,
-          st.completed_time,
-          st.status AS application_status
-        FROM sla_tracking st
-        LEFT JOIN user_master um
-          ON um.login_id = st.assigned_to
-         AND COALESCE(um.active_flag, 'N') = 'Y'
-        WHERE st.application_id = $1
-        ORDER BY st.start_time ASC, st.id ASC
+    sm.stage_description AS stage,
+    st.start_time,
+    st.due_time,
+    st.completed_time,
+    CASE
+        WHEN ut.type_name = 'SE'
+            THEN COALESCE(um.user_name, st.assigned_to) 
+                 || ' (SE: ' || COALESCE(dv.division_name, '') || ')'
+        WHEN ut.type_name = 'JE'
+            THEN COALESCE(um.user_name, st.assigned_to) 
+                 || ' (JE: ' || COALESCE(lb.block_name, '') || ')'
+        WHEN um.designation = 'Applicant'
+            THEN COALESCE(um.user_name, st.assigned_to)
+                 || ' (' || um.id || ')'
+        ELSE COALESCE(um.user_name, st.assigned_to)
+    END AS assigned_to,
+    CASE
+        WHEN st.due_time >= st.completed_time THEN 'ON_TIME'
+        WHEN st.completed_time > st.due_time THEN 'DELAY'
+        WHEN st.completed_time IS NULL AND st.due_time < NOW() THEN 'PENDING'
+        ELSE NULL
+    END AS sla_time_status
+FROM sla_tracking st
+
+LEFT JOIN user_master um
+    ON um.login_id = st.assigned_to
+
+LEFT JOIN user_type_master ut
+    ON ut.id = um.user_type_id
+
+LEFT JOIN stage_master sm
+    ON sm.stage_name = st.stage
+
+LEFT JOIN organisation o
+    ON o.application_id = st.application_id
+
+LEFT JOIN dbrap_lgd_block lb
+    ON lb.block_code::text = o.block_code::text
+
+LEFT JOIN dbrap_division dv
+    ON dv.division_code::text = lb.division_code::text
+
+WHERE st.application_id = $1
+
+ORDER BY st.start_time ASC, st.id ASC;
       `,
       [applicationId]
     );
