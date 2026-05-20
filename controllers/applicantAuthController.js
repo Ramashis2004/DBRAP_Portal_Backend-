@@ -242,7 +242,13 @@ const loginApplicantWithPassword = async (req, res) => {
         error: "This login ID is already logged in. Do you want to logout there and login here?",
       });
     }
-
+if (applicant.is_logged && forceLogin) {
+  await pool.query(
+    `UPDATE user_master SET is_logged = false WHERE id = $1`,
+    [applicant.id]
+  );
+}
+    
     // ── Success ────────────────────────────────────────────────────────────
     await pool.query(
       `UPDATE user_master SET is_logged = true WHERE id = $1`,

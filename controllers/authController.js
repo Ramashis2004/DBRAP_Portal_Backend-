@@ -164,18 +164,48 @@ const getSubtypeCircleNames = async (subTypeRow) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-const generateLoginId = async ({ userTypeName, districtCode, blockCode }) => {
+const getDivisionSerialForDistrict = async ({ districtCode, divisionCode }) => {
+  const result = await pool.query(
+    `
+      SELECT division_code,
+             ROW_NUMBER() OVER (ORDER BY division_code::text ASC) AS division_serial
+      FROM dbrap_division
+      WHERE dist_id = $1
+        AND COALESCE(active_status, true) = true
+      ORDER BY division_code::text ASC
+    `,
+    [String(districtCode || "").trim()]
+  );
+
+  const division = result.rows.find(
+    (row) => String(row.division_code) === String(divisionCode || "").trim()
+  );
+
+  if (!division) {
+    throw new Error("Unable to generate AEE login ID for the selected division");
+  }
+
+  return String(Number(division.division_serial)).padStart(2, "0");
+};
+
+const generateLoginId = async ({ userTypeName, districtCode, divisionCode, blockCode }) => {
   const normalizedUserTypeName = String(userTypeName || "")
     .trim()
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "");
 
-  const prefix =
-    normalizedUserTypeName === "CE"
-      ? "CE"
-      : normalizedUserTypeName === "JE"
-        ? `JE${String(blockCode || "").trim()}`
-        : `${normalizedUserTypeName}${districtCode}`;
+  let prefix = "";
+
+  if (normalizedUserTypeName === "CE") {
+    prefix = "CE";
+  } else if (normalizedUserTypeName === "JE") {
+    prefix = `JE${String(blockCode || "").trim()}`;
+  } else if (normalizedUserTypeName === "AEE") {
+    const divisionSerial = await getDivisionSerialForDistrict({ districtCode, divisionCode });
+    prefix = `AEE${String(districtCode || "").trim()}${divisionSerial}`;
+  } else {
+    prefix = `${normalizedUserTypeName}${districtCode}`;
+  }
 
   if (!prefix) {
     throw new Error("Unable to generate login ID prefix");
@@ -525,7 +555,12 @@ const loginOfficer = async (req, res) => {
         error: "This login ID is already logged in. Do you want to logout there and login here?",
       });
     }
-
+// if (officer.is_logged && forceLogin) {
+//   await pool.query(
+//     `UPDATE user_master SET is_logged = false WHERE id = $1`,
+//     [officer.id]
+//   );
+// }
     await pool.query(
       `
         UPDATE user_master
@@ -1160,6 +1195,7 @@ const createOfficerUser = async (req, res) => {
       generatedLoginId = await generateLoginId({
         userTypeName: userTypeResult.rows[0].type_name,
         districtCode: normalizedDistrictCode,
+        divisionCode: normalizedDivisionCode,
         blockCode: normalizedBlockCode,
       });
     }

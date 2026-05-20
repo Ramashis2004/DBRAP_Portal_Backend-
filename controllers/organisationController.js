@@ -230,32 +230,17 @@ const currentResult = await pool.query(
     const applicantUserId = currentResult.rows[0].applicant_user_id;    // ADD
     const applicantName = currentResult.rows[0].name;                   // ADD
 
-    const result = await pool.query(
+   const result = await pool.query(
   `
   UPDATE organisation
   SET application_status = $1::varchar,
-      update_on = CASE
-        WHEN $1::varchar = 'APPLICATION_FORWARDED_TO_JE' THEN NOW()
-        ELSE update_on
-      END,
-      update_on = CASE
-        WHEN $1::varchar = 'APPLICATION_APPROVED' THEN NOW()
-        ELSE update_on
-      END,
-      update_on = CASE
-        WHEN $1::varchar = 'APPLICATION_REJECTED' THEN NOW()
-        ELSE update_on
-      END,
-      update_on = CASE
-        WHEN $1::varchar = 'APPLICATION_FORWARDED_TO_JE' AND $3::boolean = true THEN NOW()
-        ELSE update_on
-      END,
-      remarks = COALESCE($4::varchar, remarks)
+      update_on = NOW(),
+      remarks = COALESCE($3::varchar, remarks)
   WHERE application_id = $2
   RETURNING application_id, organisation_name, application_status,
             created_at, update_on, remarks
   `,
-  [applicationStatus, applicationId, req.body.is_return_to_je || false, req.body.remarks || null]
+  [applicationStatus, applicationId, req.body.remarks || null]
 );
 await saveApplicationHistory(
       applicationId,          // applicationId

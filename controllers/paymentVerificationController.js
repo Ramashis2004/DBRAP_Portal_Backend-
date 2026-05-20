@@ -39,6 +39,7 @@ const getPaymentVerificationApplications = async (req, res) => {
           o.establishment_type,
           o.application_status,
           o.created_at,
+          o.update_on,
           o.forward_on,
           o.site_visit_report,
           o.site_visit_report_upload_on,

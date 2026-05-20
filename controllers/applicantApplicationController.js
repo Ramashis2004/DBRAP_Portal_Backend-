@@ -292,6 +292,157 @@ const registerApplicantOrganisation = async (req, res) => {
   }
 };
 
+const updateReturnedApplicantOrganisation = async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    const applicationId = String(req.params.applicationId || "").trim();
+    const {
+      applicant_user_id,
+      organisation_name,
+      establishment_type,
+      block_code,
+      district_code,
+      district,
+      block,
+      gram_panchayat,
+      village,
+      habitation,
+      type_of_connection,
+      water_requirement,
+    } = req.body;
+
+    if (!applicationId) return res.status(400).json({ error: "Application ID is required" });
+    if (!applicant_user_id) return res.status(400).json({ error: "Applicant user ID is required" });
+
+    const requiredFields = {
+      organisation_name, establishment_type, district_code,
+      district, block_code, block, gram_panchayat, village,
+      type_of_connection, water_requirement,
+    };
+
+    const missingField = Object.entries(requiredFields).find(([, value]) => !String(value || "").trim());
+    if (missingField) return res.status(400).json({ error: "Please complete all required fields" });
+
+    const files = req.files || {};
+    const property_proof = files.property_proof ? files.property_proof[0].path : null;
+    const registration_proof = files.registration_proof ? files.registration_proof[0].path : null;
+    const ownership_proof = files.ownership_proof ? files.ownership_proof[0].path : null;
+    const owner_indemnity_bond = files.owner_indemnity_bond ? files.owner_indemnity_bond[0].path : null;
+    const identity_proof = files.identity_proof ? files.identity_proof[0].path : null;
+
+    await client.query("BEGIN");
+
+    const applicant = await fetchApplicantById(String(applicant_user_id).trim(), client);
+    if (!applicant) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Applicant not found" });
+    }
+
+    const currentResult = await client.query(
+      `
+        SELECT application_id, application_status
+        FROM organisation
+        WHERE application_id = $1
+          AND applicant_user_id = $2
+        LIMIT 1
+      `,
+      [applicationId, applicant.id]
+    );
+
+    if (currentResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Returned application not found" });
+    }
+
+    const oldStatus = String(currentResult.rows[0].application_status || "").toUpperCase();
+    if (oldStatus !== APPLICATION_STATUS.APPLICATION_RETURNED_TO_APPLICANT) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Only returned applications can be resubmitted" });
+    }
+
+    const updateResult = await client.query(
+      `
+        UPDATE organisation
+        SET organisation_name = $1,
+            establishment_type = $2,
+            district_code = $3,
+            block_code = $4,
+            district = $5,
+            block = $6,
+            gram_panchayat = $7,
+            village = $8,
+            habitation = $9,
+            type_of_connection = $10,
+            water_requirement = $11,
+            property_proof = COALESCE($12::varchar, property_proof),
+            registration_proof = COALESCE($13::varchar, registration_proof),
+            ownership_proof = COALESCE($14::varchar, ownership_proof),
+            owner_indemnity_bond = COALESCE($15::varchar, owner_indemnity_bond),
+            identity_proof = COALESCE($16::varchar, identity_proof),
+            application_status = $17,
+            update_on = NOW(),
+            remarks = NULL
+        WHERE application_id = $18
+          AND applicant_user_id = $19
+        RETURNING *
+      `,
+      [
+        organisation_name,
+        establishment_type,
+        district_code,
+        String(block_code).replace(/^CA/i, "").trim(),
+        district,
+        block,
+        gram_panchayat,
+        village,
+        String(habitation || "").trim() || null,
+        type_of_connection,
+        water_requirement,
+        property_proof,
+        registration_proof,
+        ownership_proof,
+        owner_indemnity_bond,
+        identity_proof,
+        APPLICATION_STATUS.APPLICATION_SUBMITTED,
+        applicationId,
+        applicant.id,
+      ]
+    );
+
+    await saveApplicationHistory(
+      applicationId,
+      applicant.id,
+      applicant.user_name,
+      APPLICATION_STATUS.APPLICATION_SUBMITTED,
+      oldStatus,
+      APPLICATION_STATUS.APPLICATION_SUBMITTED,
+      "Returned application resubmitted by applicant",
+      client
+    );
+
+    await client.query("COMMIT");
+
+    await handleSlaOnStatusChange({
+      applicationId,
+      newStatus: APPLICATION_STATUS.APPLICATION_SUBMITTED,
+      actorUserId: applicant.id,
+      assignedTo: null,
+    });
+
+    return res.status(200).json({
+      message: "Application resubmitted successfully",
+      data: updateResult.rows[0],
+    });
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch {}
+    console.error("Returned applicant organisation update error:", error);
+    return res.status(500).json({ error: "Server Error" });
+  } finally {
+    client.release();
+  }
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // getApplicantApplicationCount — unchanged
 // ─────────────────────────────────────────────────────────────────────────────
@@ -318,6 +469,7 @@ const getApplicantApplicationCount = async (req, res) => {
 };
 
 const getApplicantApplication = async (req, res) => {
+
   try {
     const userId = String(req.params.userId || "").trim();
     if (!userId) return res.status(400).json({ error: "User ID is required" });
@@ -351,6 +503,7 @@ module.exports = {
   getApplicantNavigation,
   getApplicantProfile,
   registerApplicantOrganisation,
+  updateReturnedApplicantOrganisation,
   getApplicantApplicationCount,
   getApplicantApplication,
 };

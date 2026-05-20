@@ -21,13 +21,14 @@ const paymentVerificationRoutes = require("./routes/paymentVerificationRoutes");
 const updateConnRoutes = require("./routes/updateConnectionDetailsRoutes");
 const applicantPaymentRoutes = require("./routes/applicantPaymentRoutes");
 const seDashboardApplicationsRoutes = require("./routes/seDashboardApplicationsRoutes");
+const aeeDashboardApplicationsRoutes = require("./routes/aeeDashboardApplicationsRoutes");
 const ceDashboardApplicationsRoutes = require("./routes/ceDashboardApplicationsRoutes");
 const ceDashboardOverdueRoutes = require("./routes/ceDashboardOverdueRoutes");
 const eicDashboardApplicationsRoutes = require("./routes/eicDashboardApplicationsRoutes");
 const eicDashboardOverdueRoutes = require("./routes/eicDashboardOverdueRoutes");
 const slaConfigRoutes = require("./routes/slaConfigRoutes");
 const slaTrackingRoutes = require("./routes/slaTrackingRoutes");
-
+const publicDashboardRoutes = require("./routes/publicDashboardRoutes");
 const app = express();
 
 app.use(cors());
@@ -54,12 +55,14 @@ app.use("/api", forgotPasswordRoute);
 app.use("/api/payment-verification", paymentVerificationRoutes);
 app.use("/api/officer", updateConnRoutes);
 app.use("/api/se-dashboard-applications", seDashboardApplicationsRoutes);
+app.use("/api/aee-dashboard-applications", aeeDashboardApplicationsRoutes);
 app.use("/api/ce-dashboard-applications", ceDashboardApplicationsRoutes);
 app.use("/api/ce-dashboard", ceDashboardOverdueRoutes);
 app.use("/api/eic-dashboard-applications", eicDashboardApplicationsRoutes);
 app.use("/api/eic-dashboard", eicDashboardOverdueRoutes);
 app.use("/api/sla-config", slaConfigRoutes);
 app.use("/api/sla-tracking", slaTrackingRoutes);
+app.use("/api/public-dashboard", publicDashboardRoutes);
 
 const PORT = process.env.PORT || 5000;
 
@@ -82,6 +85,19 @@ const ensureOrganisationSchema = async () => {
         'APPLICATION_APPROVED'
       )
     `);
+  }
+
+  const applicationStatuses = [
+    "APPLICATION_RETURNED_TO_APPLICANT",
+    "APPLICATION_REJECTED",
+    "PAYMENT_RECEIPT_UPLOADED",
+    "PAYMENT_RECEIPT_VERIFIED",
+    "PAYMENT_RECEIPT_REJECTED",
+    "CONNECTION_DETAILS_UPDATED",
+  ];
+
+  for (const status of applicationStatuses) {
+    await pool.query(`ALTER TYPE public.application_status_enum ADD VALUE IF NOT EXISTS '${status}'`);
   }
 
   await pool.query(`
