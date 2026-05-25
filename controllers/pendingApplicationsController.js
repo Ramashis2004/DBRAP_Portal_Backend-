@@ -26,12 +26,19 @@ const fetchForUserId = async (userId, statuses) => {
         SELECT o.application_id, o.organisation_name, o.establishment_type, o.application_status,
                o.created_at,o.update_on, o.forward_on, o.site_visit_report, o.site_visit_report_upload_on, o.approved_on,
                o.district_code, o.block_code,
+               lb.division_code, dv.division_name,
+               COALESCE(ld.district_name, o.district) AS district_name,
+               COALESCE(lb.block_name, o.block) AS block_name,
                o.district, o.block, o.gram_panchayat, o.village, o.habitation,
                o.name, o.gender, o.email, o.mobile_number, o.type_of_connection, o.water_requirement,
                o.property_proof, o.registration_proof, o.ownership_proof,
                o.owner_indemnity_bond, o.identity_proof
         FROM organisation o
         INNER JOIN dbrap_lgd_block lb ON lb.block_code::text = o.block_code::text
+        LEFT JOIN dbrap_lgd_district ld ON ld.district_code::text = lb.district_code::text
+        LEFT JOIN dbrap_division dv
+          ON dv.division_code::text = lb.division_code::text
+         AND dv.dist_id::text = lb.district_code::text
         INNER JOIN user_master um
           ON um.id = $1
          AND um.user_type_id = 2
@@ -51,11 +58,19 @@ const fetchForUserId = async (userId, statuses) => {
         SELECT o.application_id, o.organisation_name, o.establishment_type, o.application_status,
                o.created_at, o.forward_on, o.site_visit_report, o.site_visit_report_upload_on, o.approved_on,
                o.district_code, o.block_code,
+               lb.division_code, dv.division_name,
+               COALESCE(ld.district_name, o.district) AS district_name,
+               COALESCE(lb.block_name, o.block) AS block_name,
                o.district, o.block, o.gram_panchayat, o.village, o.habitation,
                o.name, o.gender, o.email, o.mobile_number, o.type_of_connection, o.water_requirement,
                o.property_proof, o.registration_proof, o.ownership_proof,
                o.owner_indemnity_bond, o.identity_proof
         FROM organisation o
+        INNER JOIN dbrap_lgd_block lb ON lb.block_code::text = o.block_code::text
+        LEFT JOIN dbrap_lgd_district ld ON ld.district_code::text = lb.district_code::text
+        LEFT JOIN dbrap_division dv
+          ON dv.division_code::text = lb.division_code::text
+         AND dv.dist_id::text = lb.district_code::text
         INNER JOIN user_master um
           ON um.id = $1
          AND um.user_type_id = 4

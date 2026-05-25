@@ -55,6 +55,7 @@ const getApplicationReceivedApplications = async (req, res) => {
           SELECT o.application_id, o.organisation_name, o.establishment_type, o.application_status,
                  o.created_at, o.forward_on, o.site_visit_report, o.site_visit_report_upload_on, o.approved_on,
                  o.district_code, o.block_code,
+                 lb.division_code, dv.division_name,
                  o.district, o.block, o.gram_panchayat, o.village, o.habitation,
                  o.name, o.gender, o.email, o.mobile_number, o.type_of_connection, o.water_requirement,
                  o.property_proof, o.registration_proof, o.ownership_proof,
@@ -64,6 +65,11 @@ const getApplicationReceivedApplications = async (req, res) => {
             ON um.id = $1
            AND um.user_type_id = 4
            AND COALESCE(um.block_code::text, '') = COALESCE(o.block_code::text, '')
+          LEFT JOIN dbrap_lgd_block lb
+            ON lb.block_code::text = o.block_code::text
+          LEFT JOIN dbrap_division dv
+            ON dv.division_code::text = lb.division_code::text
+           AND dv.dist_id::text = lb.district_code::text
           WHERE o.application_status = ANY($2::text[])
           ORDER BY o.created_at DESC
         `,
@@ -79,6 +85,7 @@ const getApplicationReceivedApplications = async (req, res) => {
           SELECT o.application_id, o.organisation_name, o.establishment_type, o.application_status,
                  o.created_at, o.forward_on, o.site_visit_report, o.site_visit_report_upload_on, o.approved_on,
                  o.district_code, o.block_code,
+                 lb.division_code, dv.division_name,
                  o.district, o.block, o.gram_panchayat, o.village, o.habitation,
                  o.name, o.gender, o.email, o.mobile_number, o.type_of_connection, o.water_requirement,
                  o.property_proof, o.registration_proof, o.ownership_proof,
@@ -86,6 +93,9 @@ const getApplicationReceivedApplications = async (req, res) => {
           FROM organisation o
           INNER JOIN dbrap_lgd_block lb
             ON lb.block_code::text = o.block_code::text
+          LEFT JOIN dbrap_division dv
+            ON dv.division_code::text = lb.division_code::text
+           AND dv.dist_id::text = lb.district_code::text
           INNER JOIN user_master um
             ON um.id = $1
            AND um.user_type_id = 2

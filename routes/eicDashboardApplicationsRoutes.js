@@ -5,6 +5,7 @@ const {
   getEICDashboardDivisionReport,
   getEICDashboardBlockReport,
   getEICDashboardBlockApplications,
+  getEICDashboardPanchayatReport
 } = require("../controllers/eicDashboardApplicationsController");
 
 const router = express.Router();
@@ -14,5 +15,5 @@ router.get("/circles", getEICDashboardCircleReport);
 router.get("/divisions", getEICDashboardDivisionReport);
 router.get("/blocks", getEICDashboardBlockReport);
 router.get("/applications", getEICDashboardBlockApplications);
-
+router.get("/panchayats", getEICDashboardPanchayatReport);
 module.exports = router;

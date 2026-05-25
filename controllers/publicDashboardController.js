@@ -55,7 +55,7 @@ const getPublicDashboardSummary = async (req, res) => {
           COUNT(*)
            FILTER (
             WHERE due_time IS NOT NULL
-              AND completed_time IS NULL
+              or completed_time IS NULL
           )::int AS inspections_to_be_conducted,
           COUNT(*) FILTER (
             WHERE due_time IS NOT NULL

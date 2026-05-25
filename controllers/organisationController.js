@@ -20,6 +20,7 @@ const registerOrganisation = async (req, res) => {
       district_code,   // ✅ now received and saved
       district,
       block,
+      gram_panchayat_code,
       gram_panchayat,
       village,
       habitation,
@@ -70,7 +71,7 @@ const registerOrganisation = async (req, res) => {
         application_id,
         organisation_name, establishment_type,
         district_code, block_code,
-        district, block, gram_panchayat, village, habitation,
+        district, block, gram_panchayat_code, gram_panchayat, village, habitation,
         name, gender, email, mobile_number, type_of_connection, water_requirement,
         application_status,
         property_proof, registration_proof, ownership_proof, owner_indemnity_bond, identity_proof
@@ -79,10 +80,10 @@ const registerOrganisation = async (req, res) => {
         $1,
         $2, $3,
         $4, $5,
-        $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16,
-        $17,
-        $18, $19, $20, $21, $22
+        $6, $7, $8, $9, $10, $11,
+        $12, $13, $14, $15, $16, $17,
+        $18,
+        $19, $20, $21, $22, $23
       )
       RETURNING *
     `;
@@ -95,6 +96,7 @@ const registerOrganisation = async (req, res) => {
       rawBlockCode,            // ✅ saved (sanitized)
       district,
       block,
+      gram_panchayat_code || null,
       gram_panchayat,
       village,
       habitation,
@@ -163,35 +165,36 @@ const getOrganisations = async (req, res) => {
   try {
     const userId = req.query.userId;
 
-const result = await pool.query(
-`
-SELECT
- o.application_id,
- o.organisation_name,
- o.application_status,
- o.block,
- o.block_code
-FROM organisation o
-
-JOIN dbrap_lgd_block b
- ON b.block_code::text = o.block_code::text
-
-JOIN dbrap_division dv
- ON dv.division_code::text = b.division_code::text
-
-JOIN user_master u
- ON u.district_code::text = dv.dist_id::text
-
-WHERE u.login_id=$1
-AND o.application_status=$2
-
-ORDER BY o.created_at DESC
-`,
-[
- userId,
- requestedStatus
-]
-);
+    const result = await pool.query(
+      `
+        SELECT
+          o.application_id,
+          o.organisation_name,
+          o.application_status,
+          o.block,
+          o.block_code,
+          COALESCE(b.block_name, o.block) AS block_name,
+          b.district_code,
+          COALESCE(d.district_name, o.district) AS district_name,
+          b.division_code,
+          dv.division_name
+        FROM organisation o
+        INNER JOIN dbrap_lgd_block b
+          ON b.block_code::text = o.block_code::text
+        LEFT JOIN dbrap_lgd_district d
+          ON d.district_code::text = b.district_code::text
+        LEFT JOIN dbrap_division dv
+          ON dv.division_code::text = b.division_code::text
+         AND dv.dist_id::text = b.district_code::text
+        INNER JOIN user_master u
+          ON u.login_id = $1
+         AND u.user_type_id = 2
+         AND COALESCE(u.division_code::text, '') = COALESCE(b.division_code::text, '')
+        WHERE o.application_status = $2
+        ORDER BY o.created_at DESC
+      `,
+      [userId, requestedStatus]
+    );
     res.status(200).json(result.rows);
   } catch (error) {
     console.error(error);
@@ -287,7 +290,21 @@ const uploadSiteVisitReport = async (req, res) => {
   try {
 
      const currentResult = await pool.query(
-      `SELECT application_status, name, applicant_user_id FROM organisation WHERE application_id = $1 LIMIT 1`,
+      `
+        SELECT
+          o.application_status,
+          o.name,
+          o.applicant_user_id,
+          dv.division_name
+        FROM organisation o
+        LEFT JOIN dbrap_lgd_block lb
+          ON lb.block_code::text = o.block_code::text
+        LEFT JOIN dbrap_division dv
+          ON dv.division_code::text = lb.division_code::text
+         AND dv.dist_id::text = lb.district_code::text
+        WHERE o.application_id = $1
+        LIMIT 1
+      `,
       [applicationId]
     );
     if (currentResult.rowCount === 0) {
@@ -296,6 +313,7 @@ const uploadSiteVisitReport = async (req, res) => {
     const oldStatus = currentResult.rows[0].application_status;         // ADD
     const applicantUserId = currentResult.rows[0].applicant_user_id;    // ADD
     const applicantName = currentResult.rows[0].name;                  // ADD
+    const divisionName = currentResult.rows[0].division_name || null;
     const result = await pool.query(
       `
         UPDATE organisation
@@ -329,7 +347,10 @@ await saveApplicationHistory(
 
     return res.status(200).json({
       message: "Site visit report uploaded successfully",
-      data: result.rows[0],
+      data: {
+        ...result.rows[0],
+        division_name: divisionName,
+      },
     });
   } catch (error) {
     console.error(error);

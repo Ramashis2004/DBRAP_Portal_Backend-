@@ -29,6 +29,8 @@ const eicDashboardOverdueRoutes = require("./routes/eicDashboardOverdueRoutes");
 const slaConfigRoutes = require("./routes/slaConfigRoutes");
 const slaTrackingRoutes = require("./routes/slaTrackingRoutes");
 const publicDashboardRoutes = require("./routes/publicDashboardRoutes");
+const { cePendingRouter, eicPendingRouter } = require("./routes/pendingPieChartRoutes");
+
 const app = express();
 
 app.use(cors());
@@ -63,7 +65,8 @@ app.use("/api/eic-dashboard", eicDashboardOverdueRoutes);
 app.use("/api/sla-config", slaConfigRoutes);
 app.use("/api/sla-tracking", slaTrackingRoutes);
 app.use("/api/public-dashboard", publicDashboardRoutes);
-
+app.use("/api/ce-pending",  cePendingRouter);
+app.use("/api/eic-pending", eicPendingRouter);
 const PORT = process.env.PORT || 5000;
 
 const ensureOrganisationSchema = async () => {
@@ -118,6 +121,11 @@ const ensureOrganisationSchema = async () => {
   await pool.query(`
     ALTER TABLE organisation
     ADD COLUMN IF NOT EXISTS applicant_user_id TEXT
+  `);
+
+  await pool.query(`
+    ALTER TABLE organisation
+    ADD COLUMN IF NOT EXISTS panchayat_code TEXT
   `);
 
   await pool.query(`

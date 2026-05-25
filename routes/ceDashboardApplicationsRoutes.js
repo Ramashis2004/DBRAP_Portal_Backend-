@@ -5,6 +5,7 @@ const {
   getCEDashboardDivisionReport,
   getCEDashboardBlockReport,
   getCEDashboardBlockApplications,
+  getCEDashboardPanchayatReport
 } = require("../controllers/ceDashboardApplicationsController");
 
 const router = express.Router();
@@ -14,5 +15,5 @@ router.get("/circles", getCEDashboardCircleReport);
 router.get("/divisions", getCEDashboardDivisionReport);
 router.get("/blocks", getCEDashboardBlockReport);
 router.get("/applications", getCEDashboardBlockApplications);
-
+router.get("/panchayats", getCEDashboardPanchayatReport);
 module.exports = router;

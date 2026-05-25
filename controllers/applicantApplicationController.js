@@ -134,6 +134,7 @@ const registerApplicantOrganisation = async (req, res) => {
       district_code,
       district,
       block,
+      gram_panchayat_code,
       gram_panchayat,
       village,
       habitation,
@@ -204,7 +205,7 @@ const registerApplicantOrganisation = async (req, res) => {
           applicant_user_id, application_id,
           organisation_name, establishment_type,
           district_code, block_code,
-          district, block, gram_panchayat, village, habitation,
+          district, block, gram_panchayat_code, gram_panchayat, village, habitation,
           name, gender, email, mobile_number,
           type_of_connection, water_requirement,
           application_status,
@@ -215,11 +216,11 @@ const registerApplicantOrganisation = async (req, res) => {
           $1,  $2,
           $3,  $4,
           $5,  $6,
-          $7,  $8,  $9,  $10, $11,
-          $12, $13, $14, $15,
-          $16, $17,
-          $18,
-          $19, $20, $21, $22, $23
+          $7,  $8,  $9,  $10, $11, $12,
+          $13, $14, $15, $16,
+          $17, $18,
+          $19,
+          $20, $21, $22, $23, $24
         )
         RETURNING *
       `,
@@ -232,6 +233,7 @@ const registerApplicantOrganisation = async (req, res) => {
         rawBlockCode,
         district,
         block,
+        gram_panchayat_code || null,
         gram_panchayat,
         village,
         String(habitation || "").trim() || null,
@@ -305,6 +307,7 @@ const updateReturnedApplicantOrganisation = async (req, res) => {
       district_code,
       district,
       block,
+      gram_panchayat_code,
       gram_panchayat,
       village,
       habitation,
@@ -317,7 +320,7 @@ const updateReturnedApplicantOrganisation = async (req, res) => {
 
     const requiredFields = {
       organisation_name, establishment_type, district_code,
-      district, block_code, block, gram_panchayat, village,
+      district, block_code, block, gram_panchayat_code, gram_panchayat, village,
       type_of_connection, water_requirement,
     };
 
@@ -370,21 +373,22 @@ const updateReturnedApplicantOrganisation = async (req, res) => {
             block_code = $4,
             district = $5,
             block = $6,
-            gram_panchayat = $7,
-            village = $8,
-            habitation = $9,
-            type_of_connection = $10,
-            water_requirement = $11,
-            property_proof = COALESCE($12::varchar, property_proof),
-            registration_proof = COALESCE($13::varchar, registration_proof),
-            ownership_proof = COALESCE($14::varchar, ownership_proof),
-            owner_indemnity_bond = COALESCE($15::varchar, owner_indemnity_bond),
-            identity_proof = COALESCE($16::varchar, identity_proof),
-            application_status = $17,
+            gram_panchayat_code = $7,
+            gram_panchayat = $8,
+            village = $9,
+            habitation = $10,
+            type_of_connection = $11,
+            water_requirement = $12,
+            property_proof = COALESCE($13::varchar, property_proof),
+            registration_proof = COALESCE($14::varchar, registration_proof),
+            ownership_proof = COALESCE($15::varchar, ownership_proof),
+            owner_indemnity_bond = COALESCE($16::varchar, owner_indemnity_bond),
+            identity_proof = COALESCE($17::varchar, identity_proof),
+            application_status = $18,
             update_on = NOW(),
             remarks = NULL
-        WHERE application_id = $18
-          AND applicant_user_id = $19
+        WHERE application_id = $19
+          AND applicant_user_id = $20
         RETURNING *
       `,
       [
@@ -394,6 +398,7 @@ const updateReturnedApplicantOrganisation = async (req, res) => {
         String(block_code).replace(/^CA/i, "").trim(),
         district,
         block,
+        gram_panchayat_code || null,
         gram_panchayat,
         village,
         String(habitation || "").trim() || null,
@@ -476,7 +481,7 @@ const getApplicantApplication = async (req, res) => {
 
     const result = await pool.query(
       `SELECT application_id,name,gender,email,mobile_number, organisation_name, establishment_type,
-              district, block, gram_panchayat, village, habitation,
+              district, block, gram_panchayat_code, gram_panchayat, village, habitation,
               type_of_connection, water_requirement, application_status, created_at,
               property_proof,
     registration_proof,

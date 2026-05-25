@@ -14,14 +14,14 @@ const APPROVED_STATUSES = [
   APPLICATION_STATUS.CONNECTION_DETAILS_UPDATED,
 ];
 
+// ─── Auth helper ─────────────────────────────────────────────────────────────
+
 const getCEOfficer = async (userId) => {
   const result = await pool.query(
-    `
-      SELECT id, login_id, user_type_id, circle_code
-      FROM user_master
+    `SELECT id, login_id, user_type_id, circle_code
+       FROM user_master
       WHERE id = $1
-      LIMIT 1
-    `,
+      LIMIT 1`,
     [userId]
   );
 
@@ -62,10 +62,12 @@ const ensureCEOfficer = async (req, res) => {
   return officer;
 };
 
+// ─── Shared helpers ───────────────────────────────────────────────────────────
+
 const countSelect = `
   COUNT(DISTINCT o.application_id)::int AS total_application,
   COUNT(DISTINCT CASE WHEN o.application_status::text = ANY($2::text[]) THEN o.application_id END)::int AS application_approve,
-  COUNT(DISTINCT CASE WHEN o.application_status::text = 'APPLICATION_REJECTED' THEN o.application_id END)::int AS application_reject,
+  COUNT(DISTINCT CASE WHEN o.application_status::text = 'APPLICATION_REJECTED'            THEN o.application_id END)::int AS application_reject,
   COUNT(DISTINCT CASE WHEN o.application_status::text = ANY($3::text[]) THEN o.application_id END)::int AS application_pending
 `;
 
@@ -75,20 +77,20 @@ const parseApplicationStatusFilter = (value) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
+// ─── Summary ──────────────────────────────────────────────────────────────────
+
 const getCEDashboardApplicationSummary = async (req, res) => {
   try {
     const officer = await ensureCEOfficer(req, res);
     if (!officer) return;
 
     const result = await pool.query(
-      `
-        SELECT COUNT(DISTINCT o.application_id)::int AS total_applications
-        FROM organisation o
-        INNER JOIN dbrap_lgd_block lb ON lb.block_code::text = o.block_code::text
-        INNER JOIN dbrap_division dv ON dv.division_code::text = lb.division_code::text
-        INNER JOIN dbrap_lgd_district dd ON dd.district_code::text = dv.dist_id::text
-        WHERE dd.circle_code::text = ANY($1::text[])
-      `,
+      `SELECT COUNT(DISTINCT o.application_id)::int AS total_applications
+         FROM organisation o
+         INNER JOIN dbrap_lgd_block lb ON lb.block_code::text = o.block_code::text
+         INNER JOIN dbrap_division dv  ON dv.division_code::text = lb.division_code::text
+         INNER JOIN dbrap_lgd_district dd ON dd.district_code::text = dv.dist_id::text
+        WHERE dd.circle_code::text = ANY($1::text[])`,
       [officer.circleCodes]
     );
 
@@ -101,26 +103,26 @@ const getCEDashboardApplicationSummary = async (req, res) => {
   }
 };
 
+// ─── Circle report ────────────────────────────────────────────────────────────
+
 const getCEDashboardCircleReport = async (req, res) => {
   try {
     const officer = await ensureCEOfficer(req, res);
     if (!officer) return;
 
     const result = await pool.query(
-      `
-        SELECT
+      `SELECT
           c.circle_code,
           c.circle_name,
           ${countSelect}
-        FROM dbrap_circle c
-        LEFT JOIN dbrap_lgd_district dd ON dd.circle_code::text = c.circle_code::text
-        LEFT JOIN dbrap_division dv ON dv.dist_id::text = dd.district_code::text
-        LEFT JOIN dbrap_lgd_block lb ON lb.division_code::text = dv.division_code::text
-        LEFT JOIN organisation o ON o.block_code::text = lb.block_code::text
+         FROM dbrap_circle c
+         LEFT JOIN dbrap_lgd_district dd ON dd.circle_code::text = c.circle_code::text
+         LEFT JOIN dbrap_division dv     ON dv.dist_id::text = dd.district_code::text
+         LEFT JOIN dbrap_lgd_block lb    ON lb.division_code::text = dv.division_code::text
+         LEFT JOIN organisation o        ON o.block_code::text = lb.block_code::text
         WHERE c.circle_code::text = ANY($1::text[])
         GROUP BY c.circle_code, c.circle_name
-        ORDER BY c.circle_name ASC
-      `,
+        ORDER BY c.circle_name ASC`,
       [officer.circleCodes, APPROVED_STATUSES, PENDING_STATUSES]
     );
 
@@ -130,6 +132,8 @@ const getCEDashboardCircleReport = async (req, res) => {
     return res.status(500).json({ error: "Server Error" });
   }
 };
+
+// ─── Division report ──────────────────────────────────────────────────────────
 
 const getCEDashboardDivisionReport = async (req, res) => {
   try {
@@ -143,19 +147,17 @@ const getCEDashboardDivisionReport = async (req, res) => {
     }
 
     const result = await pool.query(
-      `
-        SELECT
+      `SELECT
           dv.division_code,
           dv.division_name,
           ${countSelect}
-        FROM dbrap_division dv
-        INNER JOIN dbrap_lgd_district dd ON dd.district_code::text = dv.dist_id::text
-        LEFT JOIN dbrap_lgd_block lb ON lb.division_code::text = dv.division_code::text
-        LEFT JOIN organisation o ON o.block_code::text = lb.block_code::text
+         FROM dbrap_division dv
+         INNER JOIN dbrap_lgd_district dd ON dd.district_code::text = dv.dist_id::text
+         LEFT  JOIN dbrap_lgd_block lb    ON lb.division_code::text = dv.division_code::text
+         LEFT  JOIN organisation o        ON o.block_code::text = lb.block_code::text
         WHERE dd.circle_code::text = $1::text
         GROUP BY dv.division_code, dv.division_name
-        ORDER BY dv.division_name ASC
-      `,
+        ORDER BY dv.division_name ASC`,
       [circleCode, APPROVED_STATUSES, PENDING_STATUSES]
     );
 
@@ -166,6 +168,8 @@ const getCEDashboardDivisionReport = async (req, res) => {
   }
 };
 
+// ─── Block report ─────────────────────────────────────────────────────────────
+
 const getCEDashboardBlockReport = async (req, res) => {
   try {
     const officer = await ensureCEOfficer(req, res);
@@ -175,20 +179,18 @@ const getCEDashboardBlockReport = async (req, res) => {
     if (!divisionCode) return res.status(400).json({ error: "Division code is required" });
 
     const result = await pool.query(
-      `
-        SELECT
+      `SELECT
           lb.block_code,
           lb.block_name,
           ${countSelect}
-        FROM dbrap_lgd_block lb
-        INNER JOIN dbrap_division dv ON dv.division_code::text = lb.division_code::text
-        INNER JOIN dbrap_lgd_district dd ON dd.district_code::text = dv.dist_id::text
-        LEFT JOIN organisation o ON o.block_code::text = lb.block_code::text
+         FROM dbrap_lgd_block lb
+         INNER JOIN dbrap_division dv     ON dv.division_code::text = lb.division_code::text
+         INNER JOIN dbrap_lgd_district dd ON dd.district_code::text = dv.dist_id::text
+         LEFT  JOIN organisation o        ON o.block_code::text = lb.block_code::text
         WHERE lb.division_code::text = $1::text
           AND dd.circle_code::text = ANY($4::text[])
         GROUP BY lb.block_code, lb.block_name
-        ORDER BY lb.block_name ASC
-      `,
+        ORDER BY lb.block_name ASC`,
       [divisionCode, APPROVED_STATUSES, PENDING_STATUSES, officer.circleCodes]
     );
 
@@ -199,6 +201,78 @@ const getCEDashboardBlockReport = async (req, res) => {
   }
 };
 
+// ─── Panchayat report (NEW) ───────────────────────────────────────────────────
+//
+//  GET /ce-dashboard/panchayat-report?userId=X&blockCode=Y[&application_status=A,B]
+//
+//  Returns one row per gram_panchayat inside the given block, with the same
+//  total / approve / reject / pending counts as every other level.
+//
+//  Assumes the organisation table has a `gram_panchayat` (name) column and
+//  optionally a `gram_panchayat_code` column.  If your table only stores the
+//  name, both columns in the SELECT below will return the name — that is fine,
+//  the frontend just needs a stable key and a display value.
+
+const getCEDashboardPanchayatReport = async (req, res) => {
+  try {
+    const officer = await ensureCEOfficer(req, res);
+    if (!officer) return;
+
+    const blockCode = String(req.query.blockCode || "").trim();
+    if (!blockCode) return res.status(400).json({ error: "Block code is required" });
+
+    const applicationStatuses = parseApplicationStatusFilter(req.query.application_status);
+
+    const result = await pool.query(
+      `SELECT
+          -- Use gram_panchayat_code when available; fall back to name as key
+          COALESCE(o.gram_panchayat_code::text, o.gram_panchayat) AS gram_panchayat_code,
+          o.gram_panchayat,
+
+          COUNT(DISTINCT o.application_id)::int AS total_application,
+
+          COUNT(DISTINCT CASE
+            WHEN ($2::text[] IS NULL OR o.application_status::text = ANY($2::text[]))
+              AND o.application_status::text = ANY($3::text[])
+            THEN o.application_id END)::int AS application_approve,
+
+          COUNT(DISTINCT CASE
+            WHEN ($2::text[] IS NULL OR o.application_status::text = ANY($2::text[]))
+              AND o.application_status::text = 'APPLICATION_REJECTED'
+            THEN o.application_id END)::int AS application_reject,
+
+          COUNT(DISTINCT CASE
+            WHEN ($2::text[] IS NULL OR o.application_status::text = ANY($2::text[]))
+              AND o.application_status::text = ANY($4::text[])
+            THEN o.application_id END)::int AS application_pending
+
+         FROM organisation o
+         INNER JOIN dbrap_lgd_block lb    ON lb.block_code::text = o.block_code::text
+         INNER JOIN dbrap_division dv     ON dv.division_code::text = lb.division_code::text
+         INNER JOIN dbrap_lgd_district dd ON dd.district_code::text = dv.dist_id::text
+        WHERE o.block_code::text = $1::text
+          AND dd.circle_code::text = ANY($5::text[])
+          AND ($2::text[] IS NULL OR o.application_status::text = ANY($2::text[]))
+        GROUP BY COALESCE(o.gram_panchayat_code::text, o.gram_panchayat), o.gram_panchayat
+        ORDER BY o.gram_panchayat ASC`,
+      [
+        blockCode,
+        applicationStatuses.length ? applicationStatuses : null, // $2 — optional status pre-filter
+        APPROVED_STATUSES,                                        // $3
+        PENDING_STATUSES,                                         // $4
+        officer.circleCodes,                                      // $5
+      ]
+    );
+
+    return res.status(200).json(result.rows);
+  } catch (error) {
+    console.error("getCEDashboardPanchayatReport error:", error);
+    return res.status(500).json({ error: "Server Error" });
+  }
+};
+
+// ─── Applications list (updated: now accepts gramPanchayatCode filter) ─────────
+
 const getCEDashboardBlockApplications = async (req, res) => {
   try {
     const officer = await ensureCEOfficer(req, res);
@@ -206,11 +280,14 @@ const getCEDashboardBlockApplications = async (req, res) => {
 
     const blockCode = String(req.query.blockCode || "").trim();
     if (!blockCode) return res.status(400).json({ error: "Block code is required" });
-    const applicationStatuses = parseApplicationStatusFilter(req.query.application_status);
+
+    const applicationStatuses   = parseApplicationStatusFilter(req.query.application_status);
+
+    // Optional panchayat filter — sent by the frontend when drilling from panchayat row
+    const gramPanchayatCode = String(req.query.gramPanchayatCode || "").trim() || null;
 
     const result = await pool.query(
-      `
-        SELECT
+      `SELECT
           o.application_id,
           o.organisation_name,
           o.establishment_type,
@@ -242,16 +319,25 @@ const getCEDashboardBlockApplications = async (req, res) => {
           o.identity_proof,
           o.applicant_user_id,
           dv.division_name
-        FROM organisation o
-        INNER JOIN dbrap_lgd_block lb ON lb.block_code::text = o.block_code::text
-        INNER JOIN dbrap_division dv ON dv.division_code::text = lb.division_code::text
-        INNER JOIN dbrap_lgd_district dd ON dd.district_code::text = dv.dist_id::text
+         FROM organisation o
+         INNER JOIN dbrap_lgd_block lb    ON lb.block_code::text = o.block_code::text
+         INNER JOIN dbrap_division dv     ON dv.division_code::text = lb.division_code::text
+         INNER JOIN dbrap_lgd_district dd ON dd.district_code::text = dv.dist_id::text
         WHERE o.block_code::text = $1::text
           AND dd.circle_code::text = ANY($2::text[])
           AND ($3::text[] IS NULL OR o.application_status::text = ANY($3::text[]))
-        ORDER BY o.created_at DESC
-      `,
-      [blockCode, officer.circleCodes, applicationStatuses.length ? applicationStatuses : null]
+          -- Panchayat filter: match on code when stored, otherwise match on name
+          AND (
+            $4::text IS NULL
+            OR COALESCE(o.gram_panchayat_code::text, o.gram_panchayat) = $4::text
+          )
+        ORDER BY o.created_at DESC`,
+      [
+        blockCode,
+        officer.circleCodes,
+        applicationStatuses.length ? applicationStatuses : null,
+        gramPanchayatCode,
+      ]
     );
 
     return res.status(200).json(result.rows);
@@ -266,5 +352,6 @@ module.exports = {
   getCEDashboardCircleReport,
   getCEDashboardDivisionReport,
   getCEDashboardBlockReport,
+  getCEDashboardPanchayatReport, // ← NEW export
   getCEDashboardBlockApplications,
 };
