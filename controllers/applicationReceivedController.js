@@ -59,7 +59,7 @@ const getApplicationReceivedApplications = async (req, res) => {
                  o.district, o.block, o.gram_panchayat, o.village, o.habitation,
                  o.name, o.gender, o.email, o.mobile_number, o.type_of_connection, o.water_requirement,
                  o.property_proof, o.registration_proof, o.ownership_proof,
-                 o.owner_indemnity_bond, o.identity_proof
+                 o.owner_indemnity_bond, o.identity_proof,o.update_on
           FROM organisation o
           INNER JOIN user_master um
             ON um.id = $1

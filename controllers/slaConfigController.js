@@ -2,6 +2,7 @@ const pool = require("../db/db");
 
 const STAGE_ROLE_MAP = {
   FORWARD_TO_JE: "SE",
+  SITE_INSPECTION_BY_JE: "JE",
   SITE_VISIT_REPORT_UPLOAD_BY_JE: "JE",
   APPROVAL_BY_SE: "SE",
   PAYMENT_BY_USER: "USER",
@@ -36,7 +37,7 @@ const listStageSlaConfigs = async (req, res) => {
         ORDER BY created_at DESC
         LIMIT 1
       ) sc ON true
-      ORDER BY sm.stage_name ASC
+      ORDER BY sm.stage_id ASC
     `
     );
 

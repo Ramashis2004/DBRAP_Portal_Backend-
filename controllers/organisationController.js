@@ -3,7 +3,7 @@ const path = require("path");
 const pool = require("../db/db");
 const { APPLICATION_STATUS } = require("../constraints/application_status_enum");
 const { saveApplicationHistory } = require("./historyController");
-const { handleSlaOnStatusChange } = require("./slaTrackingController");
+const { handleSlaOnStatusChange , handleSiteVisitUploadSla  } = require("./slaTrackingController");
 
 const APPLICATION_STATUS_VALUES = Object.values(APPLICATION_STATUS);
 const isValidApplicationStatus = (value) => APPLICATION_STATUS_VALUES.includes(value);
@@ -295,7 +295,7 @@ const uploadSiteVisitReport = async (req, res) => {
           o.application_status,
           o.name,
           o.applicant_user_id,
-          dv.division_name
+          dv.division_name,o.update_on
         FROM organisation o
         LEFT JOIN dbrap_lgd_block lb
           ON lb.block_code::text = o.block_code::text
@@ -314,16 +314,21 @@ const uploadSiteVisitReport = async (req, res) => {
     const applicantUserId = currentResult.rows[0].applicant_user_id;    // ADD
     const applicantName = currentResult.rows[0].name;                  // ADD
     const divisionName = currentResult.rows[0].division_name || null;
+    const inspectionDate = req.body.inspection_date || null;
+const inspectionTime = req.body.inspection_time || null;
+
     const result = await pool.query(
       `
         UPDATE organisation
         SET site_visit_report = $1,
             application_status = $2,
-            update_on = NOW()
+            update_on = NOW(),
+            inspection_date = $4,
+            inspection_time = $5
         WHERE application_id = $3
         RETURNING application_id, organisation_name, application_status, site_visit_report, update_on
       `,
-      [reportFile.path, APPLICATION_STATUS.JE_VERIFIED_REPORT_UPLOADED, applicationId]
+      [reportFile.path, APPLICATION_STATUS.JE_VERIFIED_REPORT_UPLOADED, applicationId, inspectionDate, inspectionTime]
     );
 await saveApplicationHistory(
       applicationId,
@@ -332,15 +337,16 @@ await saveApplicationHistory(
       APPLICATION_STATUS.JE_VERIFIED_REPORT_UPLOADED, // actionType → current status
       oldStatus,                                       // oldValue   → what it WAS
       APPLICATION_STATUS.JE_VERIFIED_REPORT_UPLOADED, // newValue   → what it changed TO
-      "JE site visit report uploaded"
+      req.body.remarks || null
     );
 
-    await handleSlaOnStatusChange({
-      applicationId,
-      newStatus: APPLICATION_STATUS.JE_VERIFIED_REPORT_UPLOADED,
-      actorUserId: req.body.userId || null,
-      assignedTo: req.body?.assignedTo ?? req.body?.assigned_to ?? null,
-    });
+    await handleSiteVisitUploadSla({
+  applicationId,
+  inspectionDate: req.body.inspection_date || null,
+  inspectionTime: req.body.inspection_time || null,
+  actorUserId: req.body.userId || null,
+  assignedTo: req.body?.assignedTo ?? req.body?.assigned_to ?? null,
+});
     if (result.rowCount === 0) {
       return res.status(404).json({ error: "Organisation not found" });
     }
