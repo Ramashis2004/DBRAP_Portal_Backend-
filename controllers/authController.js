@@ -26,25 +26,75 @@ const hashPassword = (plainPassword) => {
   return `${PASSWORD_HASH_PREFIX}$${salt}$${derivedKey}`;
 };
 
+// const verifyPassword = (plainPassword, storedPassword) => {
+//   if (!storedPassword) {
+//     return false;
+//   }
+
+//   if (!storedPassword.startsWith(`${PASSWORD_HASH_PREFIX}$`)) {
+//     return storedPassword === plainPassword;
+//   }
+
+//   const [, salt, storedHash] = storedPassword.split("$");
+
+//   if (!salt || !storedHash) {
+//     return false;
+//   }
+
+//   const derivedKey = crypto.scryptSync(plainPassword, salt, 64).toString("hex");
+//   return crypto.timingSafeEqual(Buffer.from(storedHash, "hex"), Buffer.from(derivedKey, "hex"));
+// };
+
 const verifyPassword = (plainPassword, storedPassword) => {
-  if (!storedPassword) {
+  if (!storedPassword || !plainPassword) {
     return false;
   }
 
-  if (!storedPassword.startsWith(`${PASSWORD_HASH_PREFIX}$`)) {
-    return storedPassword === plainPassword;
+  // Always trim — guards against accidental whitespace / newlines in the DB
+  const stored = storedPassword.trim();
+
+  // ── Branch 1: scrypt  ($salt$derivedKey) ────────────────────────────────
+  if (stored.startsWith("$")) {
+    const parts = stored.split("$");
+    // Format is  ""  $  salt  $  hash  → parts = ["", salt, hash]
+    const salt       = parts[1];
+    const storedHash = parts[2];
+
+    if (!salt || !storedHash) {
+      return false;
+    }
+
+    try {
+      const derivedKey = crypto.scryptSync(plainPassword, salt, 64).toString("hex");
+      return crypto.timingSafeEqual(
+        Buffer.from(storedHash, "hex"),
+        Buffer.from(derivedKey, "hex")
+      );
+    } catch {
+      return false;
+    }
   }
 
-  const [, salt, storedHash] = storedPassword.split("$");
+  // ── Branch 2: raw SHA-512 hex (128 hex chars, case-insensitive) ─────────
+  if (/^[0-9a-f]{128}$/i.test(stored)) {
+    const sha512Hash = crypto
+      .createHash("sha512")
+      .update(plainPassword)
+      .digest("hex");
 
-  if (!salt || !storedHash) {
-    return false;
+    try {
+      return crypto.timingSafeEqual(
+        Buffer.from(stored.toLowerCase(), "hex"),
+        Buffer.from(sha512Hash, "hex")
+      );
+    } catch {
+      return false;
+    }
   }
 
-  const derivedKey = crypto.scryptSync(plainPassword, salt, 64).toString("hex");
-  return crypto.timingSafeEqual(Buffer.from(storedHash, "hex"), Buffer.from(derivedKey, "hex"));
+  // ── Branch 3: plain-text fallback ───────────────────────────────────────
+  return stored === plainPassword;
 };
-
 const generatePassword = () => {
   const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
   const lower = "abcdefghijkmnopqrstuvwxyz";
@@ -507,6 +557,7 @@ const fetchActiveSubTypes = async () => {
 const loginOfficer = async (req, res) => {
   const ipAddress = req.headers["x-forwarded-for"] || req.socket.remoteAddress || null;
   const userAgent = req.headers["user-agent"] || null;
+
   try {
     const { username, password, forceLogin = false } = req.body;
 
@@ -514,6 +565,7 @@ const loginOfficer = async (req, res) => {
       return res.status(400).json({ error: "Username and password are required" });
     }
 
+    // ── Step 1: fetch user WITHOUT active_flag filter first (for debugging) ──
     const result = await pool.query(
       `
         SELECT
@@ -532,11 +584,11 @@ const loginOfficer = async (req, res) => {
         LEFT JOIN user_type_master utm ON utm.id = um.user_type_id
         LEFT JOIN dbrap_role dr ON dr.role_id::text = um.role_id
         WHERE um.login_id = $1
-          AND COALESCE(um.active_flag, 'N') = 'Y'
         LIMIT 1
       `,
       [username.trim()]
     );
+
 
     if (result.rows.length === 0) {
       await saveLoginHistory(null, username.trim(), null, ipAddress, userAgent, "false", null, false);
@@ -544,6 +596,13 @@ const loginOfficer = async (req, res) => {
     }
 
     const officer = result.rows[0];
+
+    // ── Step 2: check active_flag manually so we can give a clearer error ──
+    if (officer.active_flag !== "Y") {
+      console.warn(`Login blocked: active_flag is '${officer.active_flag}' for`, officer.login_id);
+      await saveLoginHistory(officer.id, officer.login_id, officer.user_name, ipAddress, userAgent, "false", null, false);
+      return res.status(401).json({ error: "Account is inactive. Please contact the administrator." });
+    }
 
     if (!verifyPassword(password, officer.password)) {
       await saveLoginHistory(officer.id, officer.login_id, officer.user_name, ipAddress, userAgent, "false", null, false);
@@ -556,32 +615,35 @@ const loginOfficer = async (req, res) => {
         error: "This login ID is already logged in. Do you want to logout there and login here?",
       });
     }
-// if (officer.is_logged && forceLogin) {
-//   await pool.query(
-//     `UPDATE user_master SET is_logged = false WHERE id = $1`,
-//     [officer.id]
-//   );
-// }
+
     await pool.query(
-      `
-        UPDATE user_master
-        SET is_logged = true
-        WHERE id = $1
-      `,
+      `UPDATE user_master SET is_logged = true WHERE id = $1`,
       [officer.id]
     );
 
     const sessionId = crypto.randomUUID();
+
     if (forceLogin) {
       await pool.query(
-        `UPDATE login_history SET is_active = false, logout_time = NOW() WHERE user_id = $1 AND is_active = true`,
+        `UPDATE login_history SET is_active = false, logout_time = NOW()
+         WHERE user_id = $1 AND is_active = true`,
         [officer.id]
       );
     }
-    await saveLoginHistory(officer.id, officer.login_id, officer.user_name, ipAddress, userAgent, "true", sessionId, true);
+
+    await saveLoginHistory(
+      officer.id, officer.login_id, officer.user_name,
+      ipAddress, userAgent, "true", sessionId, true
+    );
 
     const token = jwt.sign(
-      { id: officer.id, loginId: officer.login_id, roleId: officer.role_id, roleName: officer.role_name, sessionId: sessionId },
+      {
+        id: officer.id,
+        loginId: officer.login_id,
+        roleId: officer.role_id,
+        roleName: officer.role_name,
+        sessionId,
+      },
       process.env.JWT_SECRET,
       { expiresIn: "24h" }
     );
@@ -602,7 +664,10 @@ const loginOfficer = async (req, res) => {
     });
   } catch (error) {
     console.error("Officer login error:", error);
-    await saveLoginHistory(null, String(req.body?.username || "").trim() || null, null, ipAddress, userAgent, "false", null, false);
+    await saveLoginHistory(
+      null, String(req.body?.username || "").trim() || null,
+      null, ipAddress, userAgent, "false", null, false
+    );
     return res.status(500).json({ error: "Server Error" });
   }
 };
