@@ -175,6 +175,7 @@ const sendOtp = async (req, res) => {
     }
 
     const otp = generateOtp();
+    console.log(`[OTP DEBUG] Generated OTP for user "${trimmed}": ${otp}`);
     const nextSendCount = currentSendCount + 1;
     const isLockedOutAfterThisSend = nextSendCount >= OTP_MAX_SEND_ATTEMPTS;
     const resendAvailableAt = isLockedOutAfterThisSend ? now + OTP_RESEND_LOCKOUT_MS : now + OTP_RESEND_COOLDOWN_MS;
@@ -224,8 +225,6 @@ const sendOtp = async (req, res) => {
       resendBlocked: isLockedOutAfterThisSend,
       retryAfterSeconds: isLockedOutAfterThisSend ? Math.ceil(OTP_RESEND_LOCKOUT_MS / 1000) : Math.ceil(OTP_RESEND_COOLDOWN_MS / 1000),
       sendCount: nextSendCount,
-      // Only send OTP in response when SMS is disabled (dev/testing)
-      ...(SMS_ENABLED ? {} : { devOtp: otp }),
     });
   } catch (err) {
     console.error("sendOtp error:", err);

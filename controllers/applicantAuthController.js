@@ -112,12 +112,14 @@ const loginApplicant = async (req, res) => {
     // ── FAILED: applicant not registered ─────────────────────────────────────
     if (!applicant) {
       await saveLoginHistory(
-        null,            // userId   → unknown
-        trimmedMobile,   // loginId  → mobile used as login credential
-        null,            // userName → unknown
+        null,            // userId
+        trimmedMobile,   // loginId
+        null,            // userName
         ipAddress,
         userAgent,
-        "FAILURE"
+        "false",
+        null,
+        false
       );
       return res.status(404).json({
         error: "Applicant not found for this mobile Number Please Register the Applicant",
@@ -142,18 +144,27 @@ if (applicant.is_logged && forceLogin) {
       [applicant.id]
     );
 
+    const sessionId = crypto.randomUUID();
+    if (forceLogin) {
+      await pool.query(
+        `UPDATE login_history SET is_active = false, logout_time = NOW() WHERE user_id = $1 AND is_active = true`,
+        [applicant.id]
+      );
+    }
     await saveLoginHistory(
       applicant.id,
-      applicant.login_id,  // login_id = applicant's USER00001 style ID
+      applicant.login_id,
       applicant.user_name,
       ipAddress,
       userAgent,
-      "SUCCESS"
+      "true",
+      sessionId,
+      true
     );
 
     const token = jwt.sign(
-      { id: applicant.id, loginId: applicant.login_id, roleId: applicant.role_id, roleName: "Applicant" },
-      process.env.JWT_SECRET || "dbrap_portal_jwt_secret_key_2026",
+      { id: applicant.id, loginId: applicant.login_id, roleId: applicant.role_id, roleName: "Applicant", sessionId: sessionId },
+      process.env.JWT_SECRET,
       { expiresIn: "24h" }
     );
 
@@ -181,7 +192,9 @@ if (applicant.is_logged && forceLogin) {
       null,
       ipAddress,
       userAgent,
-      "FAILURE"
+      "false",
+      null,
+      false
     );
 
     return res.status(500).json({ error: "Server Error" });
@@ -226,7 +239,7 @@ const loginApplicantWithPassword = async (req, res) => {
 
     // ── User not found ─────────────────────────────────────────────────────
     if (result.rows.length === 0) {
-      await saveLoginHistory(null, loginId, null, ipAddress, userAgent, "FAILURE");
+      await saveLoginHistory(null, loginId, null, ipAddress, userAgent, "false", null, false);
       return res.status(401).json({ error: "Invalid User ID or password" });
     }
 
@@ -234,13 +247,13 @@ const loginApplicantWithPassword = async (req, res) => {
 
     // ── Account inactive ───────────────────────────────────────────────────
     if (applicant.active_flag !== "Y") {
-      await saveLoginHistory(applicant.id, applicant.login_id, applicant.user_name, ipAddress, userAgent, "FAILURE");
+      await saveLoginHistory(applicant.id, applicant.login_id, applicant.user_name, ipAddress, userAgent, "false", null, false);
       return res.status(403).json({ error: "This account is inactive. Please contact support." });
     }
 
     // ── Wrong password ─────────────────────────────────────────────────────
     if (!verifyPassword(password, applicant.password)) {
-      await saveLoginHistory(applicant.id, applicant.login_id, applicant.user_name, ipAddress, userAgent, "FAILURE");
+      await saveLoginHistory(applicant.id, applicant.login_id, applicant.user_name, ipAddress, userAgent, "false", null, false);
       return res.status(401).json({ error: "Invalid User ID or password" });
     }
 
@@ -263,18 +276,27 @@ if (applicant.is_logged && forceLogin) {
       [applicant.id]
     );
 
+    const sessionId = crypto.randomUUID();
+    if (forceLogin) {
+      await pool.query(
+        `UPDATE login_history SET is_active = false, logout_time = NOW() WHERE user_id = $1 AND is_active = true`,
+        [applicant.id]
+      );
+    }
     await saveLoginHistory(
       applicant.id,
       applicant.login_id,
       applicant.user_name,
       ipAddress,
       userAgent,
-      "SUCCESS"
+      "true",
+      sessionId,
+      true
     );
 
     const token = jwt.sign(
-      { id: applicant.id, loginId: applicant.login_id, roleId: applicant.role_id, roleName: "Applicant" },
-      process.env.JWT_SECRET || "dbrap_portal_jwt_secret_key_2026",
+      { id: applicant.id, loginId: applicant.login_id, roleId: applicant.role_id, roleName: "Applicant", sessionId: sessionId },
+      process.env.JWT_SECRET,
       { expiresIn: "24h" }
     );
 
@@ -300,7 +322,9 @@ if (applicant.is_logged && forceLogin) {
       null,
       ipAddress,
       userAgent,
-      "FAILURE"
+      "false",
+      null,
+      false
     );
     return res.status(500).json({ error: "Server Error" });
   }

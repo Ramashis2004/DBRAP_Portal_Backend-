@@ -1,18 +1,76 @@
 const pool = require("../db/db");
 
 /**
+ * Parse browser name and version from a User-Agent string
+ */
+const parseUserAgent = (ua) => {
+  if (!ua) return "Unknown";
+  
+  const uaString = String(ua).trim();
+
+  // Edge (Edg)
+  const edgeMatch = uaString.match(/(?:Edge|Edg|EdgiOS|EdgeA)\/([0-9._]+)/);
+  if (edgeMatch) return `Edge ${edgeMatch[1]}`;
+
+  // Opera (OPR)
+  const operaMatch = uaString.match(/(?:Opera|OPR)\/([0-9._]+)/);
+  if (operaMatch) return `Opera ${operaMatch[1]}`;
+
+  // Brave
+  const braveMatch = uaString.match(/Brave\/([0-9._]+)/);
+  if (braveMatch) return `Brave ${braveMatch[1]}`;
+
+  if (/Brave/i.test(uaString)) {
+    const chromeMatch = uaString.match(/Chrome\/([0-9._]+)/);
+    return `Brave ${chromeMatch ? chromeMatch[1] : ""}`.trim();
+  }
+
+  // Chrome
+  const chromeMatch = uaString.match(/Chrome\/([0-9._]+)/);
+  if (chromeMatch) return `Chrome ${chromeMatch[1]}`;
+
+  // Safari
+  const safariMatch = uaString.match(/Version\/([0-9._]+).*Safari/);
+  if (safariMatch) return `Safari ${safariMatch[1]}`;
+
+  // Firefox
+  const firefoxMatch = uaString.match(/Firefox\/([0-9._]+)/);
+  if (firefoxMatch) return `Firefox ${firefoxMatch[1]}`;
+
+  // Internet Explorer
+  const ieMatch = uaString.match(/(?:MSIE |Trident\/.*; rv:)([0-9._]+)/);
+  if (ieMatch) return `IE ${ieMatch[1]}`;
+
+  // Fallback to first matched word/version
+  const generalMatch = uaString.match(/^([A-Za-z0-9.]+)/);
+  if (generalMatch) return generalMatch[1];
+
+  return "Unknown";
+};
+
+/**
  * Save login history when a user (officer or applicant) logs in
  */
-const saveLoginHistory = async (userId, loginId, ipAddress, userAgent, loginStatus) => {
+const saveLoginHistory = async (userId, loginId, userName, ipAddress, userAgent, loginStatus, sessionId = null, isActive = true) => {
   try {
+    const parsedBrowser = parseUserAgent(userAgent);
     await pool.query(
       `
         INSERT INTO login_history (
-          user_id, login_id, ip_address, user_agent, login_status, login_time
+          user_id, login_id, user_name, ip_address, user_agent, login_status, session_id, is_active, login_time, last_activity
         )
-        VALUES ($1, $2, $3, $4, $5, NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
       `,
-      [userId || null, loginId || null, ipAddress || null, userAgent || null, loginStatus]
+      [
+        userId || null,
+        loginId || null,
+        userName || null,
+        ipAddress || null,
+        parsedBrowser,
+        loginStatus,
+        sessionId || null,
+        isActive
+      ]
     );
     return true;
   } catch (error) {

@@ -257,9 +257,21 @@ const ensureOrganisationSchema = async () => {
       ip_address TEXT,
       user_agent TEXT,
       login_status TEXT NOT NULL DEFAULT 'SUCCESS',
-      login_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      login_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      session_id TEXT,
+      logout_time TIMESTAMPTZ,
+      mac_address TEXT,
+      last_activity TIMESTAMPTZ DEFAULT NOW(),
+      is_active BOOLEAN DEFAULT true
     )
   `);
+
+  await pool.query(`ALTER TABLE login_history ADD COLUMN IF NOT EXISTS user_name TEXT`);
+  await pool.query(`ALTER TABLE login_history ADD COLUMN IF NOT EXISTS session_id TEXT`);
+  await pool.query(`ALTER TABLE login_history ADD COLUMN IF NOT EXISTS logout_time TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE login_history ADD COLUMN IF NOT EXISTS mac_address TEXT`);
+  await pool.query(`ALTER TABLE login_history ADD COLUMN IF NOT EXISTS last_activity TIMESTAMPTZ DEFAULT NOW()`);
+  await pool.query(`ALTER TABLE login_history ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS sla_config (

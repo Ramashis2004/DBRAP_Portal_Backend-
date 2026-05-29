@@ -539,14 +539,14 @@ const loginOfficer = async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      await saveLoginHistory(null, username.trim(), null, ipAddress, userAgent, "FAILURE");
+      await saveLoginHistory(null, username.trim(), null, ipAddress, userAgent, "false", null, false);
       return res.status(401).json({ error: "Invalid officer credentials" });
     }
 
     const officer = result.rows[0];
 
     if (!verifyPassword(password, officer.password)) {
-      await saveLoginHistory(officer.id, officer.login_id, officer.user_name, ipAddress, userAgent, "FAILURE");
+      await saveLoginHistory(officer.id, officer.login_id, officer.user_name, ipAddress, userAgent, "false", null, false);
       return res.status(401).json({ error: "Invalid officer credentials" });
     }
 
@@ -570,11 +570,19 @@ const loginOfficer = async (req, res) => {
       `,
       [officer.id]
     );
-    await saveLoginHistory(officer.id, officer.login_id, officer.user_name, ipAddress, userAgent, "SUCCESS");
+
+    const sessionId = crypto.randomUUID();
+    if (forceLogin) {
+      await pool.query(
+        `UPDATE login_history SET is_active = false, logout_time = NOW() WHERE user_id = $1 AND is_active = true`,
+        [officer.id]
+      );
+    }
+    await saveLoginHistory(officer.id, officer.login_id, officer.user_name, ipAddress, userAgent, "true", sessionId, true);
 
     const token = jwt.sign(
-      { id: officer.id, loginId: officer.login_id, roleId: officer.role_id, roleName: officer.role_name },
-      process.env.JWT_SECRET || "dbrap_portal_jwt_secret_key_2026",
+      { id: officer.id, loginId: officer.login_id, roleId: officer.role_id, roleName: officer.role_name, sessionId: sessionId },
+      process.env.JWT_SECRET,
       { expiresIn: "24h" }
     );
 
@@ -594,7 +602,7 @@ const loginOfficer = async (req, res) => {
     });
   } catch (error) {
     console.error("Officer login error:", error);
-    await saveLoginHistory(null, String(req.body?.username || "").trim() || null, null, ipAddress, userAgent, "FAILURE");
+    await saveLoginHistory(null, String(req.body?.username || "").trim() || null, null, ipAddress, userAgent, "false", null, false);
     return res.status(500).json({ error: "Server Error" });
   }
 };
@@ -1467,6 +1475,26 @@ const logoutOfficer = async (req, res) => {
       `,
       [userId]
     );
+
+    if (req.user && req.user.sessionId) {
+      await pool.query(
+        `
+          UPDATE login_history
+          SET is_active = false, logout_time = NOW()
+          WHERE session_id = $1
+        `,
+        [req.user.sessionId]
+      );
+    } else {
+      await pool.query(
+        `
+          UPDATE login_history
+          SET is_active = false, logout_time = NOW()
+          WHERE user_id = $1 AND is_active = true
+        `,
+        [userId]
+      );
+    }
 
     return res.status(200).json({ message: "Logout successful" });
   } catch (error) {

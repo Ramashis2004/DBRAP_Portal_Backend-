@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const pool = require("../db/db");
 
 const PUBLIC_ROUTES = [
   { path: /^\/api\/auth\/login$/, methods: ["POST"] },
@@ -13,7 +14,7 @@ const PUBLIC_ROUTES = [
   { path: /^\/api\/officer\/test$/, methods: ["GET"] },
 ];
 
-const authMiddleware = (req, res, next) => {
+const authMiddleware = async (req, res, next) => {
   const { originalUrl, method } = req;
 
   // Always allow OPTIONS requests for CORS preflight
@@ -41,8 +42,49 @@ const authMiddleware = (req, res, next) => {
 
   const token = authHeader.split(" ")[1];
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "dbrap_portal_jwt_secret_key_2026");
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded; // Attach user info to request
+
+    // Verify if this specific session is still active in the database
+    if (decoded && decoded.sessionId) {
+      const sessionCheck = await pool.query(
+        `SELECT is_active, last_activity FROM login_history WHERE session_id = $1 LIMIT 1`,
+        [decoded.sessionId]
+      );
+
+      if (sessionCheck.rows.length === 0) {
+        return res.status(401).json({ error: "Session not found." });
+      }
+
+      const session = sessionCheck.rows[0];
+      if (session.is_active !== true) {
+        return res.status(401).json({ error: "Session has been terminated from another device or browser." });
+      }
+
+      // Check for inactivity timeout
+      if (session.last_activity) {
+        const lastActivity = new Date(session.last_activity);
+        const now = new Date();
+        const inactivityMinutes = (now - lastActivity) / (1000 * 60);
+        const timeoutMinutes = Number(process.env.SESSION_TIMEOUT_MINUTES || 60);
+
+        if (inactivityMinutes > timeoutMinutes) {
+          // Deactivate the session in the database due to inactivity
+          await pool.query(
+            `UPDATE login_history SET is_active = false, logout_time = NOW() WHERE session_id = $1`,
+            [decoded.sessionId]
+          );
+          return res.status(401).json({ error: "Session has expired due to inactivity. Please log in again." });
+        }
+      }
+
+      // Async update of last activity timestamp in login history for active session
+      pool.query(
+        `UPDATE login_history SET last_activity = NOW() WHERE session_id = $1`,
+        [decoded.sessionId]
+      ).catch(err => console.error("Error updating last_activity time:", err));
+    }
+
     next();
   } catch (error) {
     return res.status(401).json({ error: "Invalid or expired token." });
