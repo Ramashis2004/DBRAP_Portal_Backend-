@@ -82,10 +82,14 @@ const authMiddleware = async (req, res, next) => {
       }
 
       // Async update of last activity timestamp in login history for active session
-      pool.query(
-        `UPDATE login_history SET last_activity = NOW() WHERE session_id = $1`,
-        [decoded.sessionId]
-      ).catch(err => console.error("Error updating last_activity time:", err));
+      // (excluding background check-session requests to allow inactivity timeout to function correctly)
+      const isSessionCheck = cleanPath.endsWith("/check-session");
+      if (!isSessionCheck) {
+        pool.query(
+          `UPDATE login_history SET last_activity = NOW() WHERE session_id = $1`,
+          [decoded.sessionId]
+        ).catch(err => console.error("Error updating last_activity time:", err));
+      }
     }
 
     next();
