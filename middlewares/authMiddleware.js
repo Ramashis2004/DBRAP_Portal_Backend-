@@ -48,7 +48,7 @@ const authMiddleware = async (req, res, next) => {
     // Verify if this specific session is still active in the database
     if (decoded && decoded.sessionId) {
       const sessionCheck = await pool.query(
-        `SELECT is_active, last_activity FROM login_history WHERE session_id = $1 LIMIT 1`,
+        `SELECT id, is_active, last_activity FROM login_history WHERE session_id = $1 LIMIT 1`,
         [decoded.sessionId]
       );
 
@@ -60,6 +60,9 @@ const authMiddleware = async (req, res, next) => {
       if (session.is_active !== true) {
         return res.status(401).json({ error: "Session has been terminated from another device or browser." });
       }
+
+      // Attach login history ID to request object for logging
+      req.loginHistoryId = session.id;
 
       // Check for inactivity timeout
       if (session.last_activity) {

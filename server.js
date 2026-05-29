@@ -33,12 +33,14 @@ const { cePendingRouter, eicPendingRouter } = require("./routes/pendingPieChartR
 const seDashboardStatusCountRoutes = require("./routes/seDashboardStatusCountRoutes");
 const aeeStatusCountRoutes = require("./routes/aeeStatusCountRoutes");
 const authMiddleware = require("./middlewares/authMiddleware");
+const activityLogMiddleware = require("./middlewares/activityLogMiddleware");
    
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 app.use(authMiddleware);
+app.use(activityLogMiddleware);
 app.get("/api/officer/test", (req, res) => {
   res.json({ ok: true });
 });
@@ -357,6 +359,38 @@ const ensureOrganisationSchema = async () => {
       remarks TEXT,
       action_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `);
+
+  // Create login_activity_logs sequence, table, and indexes
+  await pool.query(`
+    CREATE SEQUENCE IF NOT EXISTS public.login_activity_logs_sl_no_seq;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS public.login_activity_logs (
+      sl_no bigint NOT NULL DEFAULT nextval('public.login_activity_logs_sl_no_seq'::regclass),
+      login_history_id bigint NOT NULL,
+      api_endpoint text NOT NULL,
+      http_method character varying(10) NOT NULL,
+      response_status_code integer NOT NULL,
+      created_at timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      action_performed text,
+      CONSTRAINT login_activity_logs_pkey PRIMARY KEY (sl_no),
+      CONSTRAINT fk_login_activity_logs_login_history FOREIGN KEY (login_history_id)
+          REFERENCES public.login_history (id) MATCH SIMPLE
+          ON UPDATE NO ACTION
+          ON DELETE CASCADE
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_login_activity_logs_created_at
+    ON public.login_activity_logs USING btree (created_at ASC NULLS LAST)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_login_activity_logs_login_history_id
+    ON public.login_activity_logs USING btree (login_history_id ASC NULLS LAST)
   `);
 };
 
