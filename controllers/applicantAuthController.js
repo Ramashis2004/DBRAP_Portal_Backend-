@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const jwt = require("jsonwebtoken");
 
 const pool = require("../db/db");
 const { saveLoginHistory } = require("./historyController"); // ← add this
@@ -150,8 +151,15 @@ if (applicant.is_logged && forceLogin) {
       "SUCCESS"
     );
 
+    const token = jwt.sign(
+      { id: applicant.id, loginId: applicant.login_id, roleId: applicant.role_id, roleName: "Applicant" },
+      process.env.JWT_SECRET || "dbrap_portal_jwt_secret_key_2026",
+      { expiresIn: "24h" }
+    );
+
     return res.status(200).json({
       message: "Applicant login successful",
+      token,
       applicant: {
         id: applicant.id,
         name: applicant.user_name,
@@ -264,8 +272,15 @@ if (applicant.is_logged && forceLogin) {
       "SUCCESS"
     );
 
+    const token = jwt.sign(
+      { id: applicant.id, loginId: applicant.login_id, roleId: applicant.role_id, roleName: "Applicant" },
+      process.env.JWT_SECRET || "dbrap_portal_jwt_secret_key_2026",
+      { expiresIn: "24h" }
+    );
+
     return res.status(200).json({
       message: "Login successful",
+      token,
       applicant: {
         id:                applicant.id,
         name:              applicant.user_name,

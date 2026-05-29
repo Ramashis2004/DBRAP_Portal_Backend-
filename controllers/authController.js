@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const pool = require("../db/db");
 const { saveLoginHistory } = require("./historyController");
+const jwt = require("jsonwebtoken");
 
 
 const USER_NAME_REGEX = /^[A-Za-z][A-Za-z\s.'-]{1,79}$/;
@@ -571,8 +572,15 @@ const loginOfficer = async (req, res) => {
     );
     await saveLoginHistory(officer.id, officer.login_id, officer.user_name, ipAddress, userAgent, "SUCCESS");
 
+    const token = jwt.sign(
+      { id: officer.id, loginId: officer.login_id, roleId: officer.role_id, roleName: officer.role_name },
+      process.env.JWT_SECRET || "dbrap_portal_jwt_secret_key_2026",
+      { expiresIn: "24h" }
+    );
+
     return res.status(200).json({
       message: "Login successful",
+      token,
       user: {
         id: officer.id,
         name: officer.user_name,

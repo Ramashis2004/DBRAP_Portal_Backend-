@@ -32,11 +32,13 @@ const publicDashboardRoutes = require("./routes/publicDashboardRoutes");
 const { cePendingRouter, eicPendingRouter } = require("./routes/pendingPieChartRoutes");
 const seDashboardStatusCountRoutes = require("./routes/seDashboardStatusCountRoutes");
 const aeeStatusCountRoutes = require("./routes/aeeStatusCountRoutes");
+const authMiddleware = require("./middlewares/authMiddleware");
    
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use(authMiddleware);
 app.get("/api/officer/test", (req, res) => {
   res.json({ ok: true });
 });
