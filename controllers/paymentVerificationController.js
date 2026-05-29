@@ -29,8 +29,6 @@ const getPaymentVerificationApplications = async (req, res) => {
       });
     }
 
-    // All payment data (amount, date_of_payment, money_receipt, payment_status)
-    // is stored in the organisation table — no JOIN needed
     const result = await pool.query(
       `
         SELECT
@@ -66,7 +64,8 @@ const getPaymentVerificationApplications = async (req, res) => {
           o.identity_proof,
           o.amount,
           o.date_of_payment,
-          o.money_receipt
+          o.money_receipt,
+          o.payment_rejection_count
         FROM organisation o
         INNER JOIN user_master um
           ON um.id = $1
@@ -87,19 +86,18 @@ const getPaymentVerificationApplications = async (req, res) => {
 
 const verifyPayment = async (req, res) => {
   const applicationId = String(req.params.applicationId || "").trim();
-  const { action, remarks } = req.body;
+  const { action, remarks, userId } = req.body;
 
   if (!applicationId) {
     return res.status(400).json({ error: "Application ID is required" });
   }
-
   if (!action) {
     return res.status(400).json({ error: "Action is required" });
   }
 
   const allowedActions = [
     APPLICATION_STATUS.PAYMENT_RECEIPT_VERIFIED,
-    APPLICATION_STATUS.PAYMENT_NOT_VERIFIED,
+    APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED,
   ];
 
   if (!allowedActions.includes(action)) {
@@ -107,8 +105,12 @@ const verifyPayment = async (req, res) => {
   }
 
   try {
+    // ── Fetch current state ────────────────────────────────────────────────
     const currentResult = await pool.query(
-      `SELECT application_status FROM organisation WHERE application_id = $1 LIMIT 1`,
+      `SELECT application_status, payment_rejection_count
+       FROM organisation
+       WHERE application_id = $1
+       LIMIT 1`,
       [applicationId]
     );
 
@@ -116,57 +118,84 @@ const verifyPayment = async (req, res) => {
       return res.status(404).json({ error: "Application not found" });
     }
 
+    const oldStatus       = currentResult.rows[0].application_status;
+    const rejectionCount  = Number(currentResult.rows[0].payment_rejection_count) || 0;
+
+    // ── Determine final status ─────────────────────────────────────────────
+    // If JE rejects AND this is already the 1st rejection (count >= 1),
+    // permanently reject the application.
+    let finalStatus = action;
+    if (action === APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED && rejectionCount >= 1) {
+      finalStatus = APPLICATION_STATUS.APPLICATION_REJECTED;
+    }
+
+    // ── Update organisation ────────────────────────────────────────────────
     const result = await pool.query(
       `
         UPDATE organisation
         SET
-          application_status      = $1::varchar,
-          update_on = CASE
-            WHEN $1::varchar = $3 THEN NOW()
-            ELSE update_on
+          application_status       = $1::varchar,
+          update_on                = NOW(),
+          remarks                  = COALESCE($3::varchar, remarks),
+          -- increment count only on a rejection action (not on permanent reject)
+          payment_rejection_count  = CASE
+            WHEN $4::varchar = $5::varchar
+            THEN COALESCE(payment_rejection_count, 0) + 1
+            ELSE payment_rejection_count
           END,
-          remarks = COALESCE($4::varchar, remarks)
+          -- clear verify timestamp when rejecting so re-upload is clean
+          money_receipt_verify_on  = CASE
+            WHEN $1::varchar = $6::varchar THEN NOW()
+            ELSE money_receipt_verify_on
+          END
         WHERE application_id = $2
         RETURNING
           application_id,
           organisation_name,
           application_status,
-          money_receipt_upload_on,
           update_on,
-          remarks
+          remarks,
+          payment_rejection_count
       `,
       [
-        action,
-        applicationId,
-        APPLICATION_STATUS.PAYMENT_RECEIPT_VERIFIED,
-        remarks || null,
+        finalStatus,                                          // $1 – new status
+        applicationId,                                        // $2
+        remarks || null,                                      // $3 – remark text
+        action,                                               // $4 – what JE chose
+        APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED,         // $5 – rejection constant
+        APPLICATION_STATUS.PAYMENT_RECEIPT_VERIFIED,          // $6 – verified constant
       ]
     );
 
-// inside verifyPayment, after the UPDATE query:
-await saveApplicationHistory(
-  applicationId,
-  req.body.userId || null,                       // JE officer verifying
-  null,
-  action,                                        // PAYMENT_RECEIPT_VERIFIED or PAYMENT_NOT_VERIFIED
-  currentResult.rows[0].application_status,      // old status
-  action,
-  remarks || null
-);
-
-    await handleSlaOnStatusChange({
-      applicationId,
-      newStatus: action,
-      actorUserId: req.body.userId || null,
-      assignedTo: req.body?.assignedTo ?? req.body?.assigned_to ?? null,
-    });
     if (result.rowCount === 0) {
       return res.status(404).json({ error: "Application not found" });
     }
 
+    // ── Save history with remarks ──────────────────────────────────────────
+    // remarks are passed as the last argument so they appear in history table
+    await saveApplicationHistory(
+      applicationId,
+      userId || null,
+      null,
+      finalStatus,
+      oldStatus,
+      finalStatus,
+      remarks || null
+    );
+
+    // ── SLA tracking ──────────────────────────────────────────────────────
+    await handleSlaOnStatusChange({
+      applicationId,
+      newStatus:   finalStatus,
+      actorUserId: userId || null,
+      assignedTo:  req.body?.assignedTo ?? req.body?.assigned_to ?? null,
+    });
+
     return res.status(200).json({
       message: "Payment verification status updated successfully",
       data: result.rows[0],
+      // tell the front-end whether this was a permanent rejection
+      permanentlyRejected: finalStatus === APPLICATION_STATUS.APPLICATION_REJECTED,
     });
   } catch (error) {
     console.error("verifyPayment error:", error);

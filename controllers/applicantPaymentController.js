@@ -1,10 +1,11 @@
 // controllers/applicantPaymentController.js
 const pool = require("../db/db");
 const path = require("path");
-const fs = require("fs");
-const { saveApplicationHistory } = require("./historyController");
-const { APPLICATION_STATUS } = require("../constraints/application_status_enum");
-const { handleSlaOnStatusChange } = require("./slaTrackingController");
+const fs   = require("fs");
+const { saveApplicationHistory }   = require("./historyController");
+const { APPLICATION_STATUS }       = require("../constraints/application_status_enum");
+const { handleSlaOnStatusChange }  = require("./slaTrackingController");
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 const getApplicantApplication = async (applicantUserId) => {
@@ -26,7 +27,9 @@ const getApplicantApplication = async (applicantUserId) => {
        amount,
        date_of_payment,
        money_receipt,
-       money_receipt_upload_on
+       money_receipt_upload_on,
+       payment_rejection_count,
+       remarks
      FROM organisation
      WHERE applicant_user_id = $1
      ORDER BY created_at DESC
@@ -37,7 +40,6 @@ const getApplicantApplication = async (applicantUserId) => {
 };
 
 // ── GET /api/applicant-payment/details ───────────────────────────────────────
-// Returns the application + payment info for the logged-in applicant
 const getApplicantPaymentDetails = async (req, res) => {
   try {
     const userId = String(req.query.userId || "").trim();
@@ -60,17 +62,13 @@ const getApplicantPaymentDetails = async (req, res) => {
 };
 
 // ── POST /api/applicant-payment/upload ───────────────────────────────────────
-// Saves amount, date_of_payment, money_receipt (file path),
-// sets application_status = 'PAYMENT_RECEIPT_UPLOADED',
-// sets money_receipt_upload_on = NOW()
 const uploadApplicantPaymentReceipt = async (req, res) => {
   try {
-    const userId      = String(req.body.userId      || "").trim();
+    const userId        = String(req.body.userId        || "").trim();
     const applicationId = String(req.body.applicationId || "").trim();
-    const amount      = Number(req.body.amount);
+    const amount        = Number(req.body.amount);
     const dateOfPayment = String(req.body.dateOfPayment || "").trim();
 
-    // ── Validation ────────────────────────────────────────────────────────────
     if (!userId || !applicationId || !dateOfPayment || !Number.isFinite(amount) || amount <= 0) {
       return res.status(400).json({
         error: "userId, applicationId, amount and dateOfPayment are required.",
@@ -81,12 +79,12 @@ const uploadApplicantPaymentReceipt = async (req, res) => {
       return res.status(400).json({ error: "Money receipt file is required." });
     }
 
-    // ── Verify the application belongs to this applicant ─────────────────────
+    // ── Verify ownership and check allowed statuses ────────────────────────
     const checkResult = await pool.query(
-      `SELECT application_id, application_status::TEXT
+      `SELECT application_id, application_status::TEXT, payment_rejection_count
        FROM organisation
-       WHERE application_id     = $1
-         AND applicant_user_id  = $2
+       WHERE application_id    = $1
+         AND applicant_user_id = $2
        LIMIT 1`,
       [applicationId, userId]
     );
@@ -95,40 +93,77 @@ const uploadApplicantPaymentReceipt = async (req, res) => {
       return res.status(404).json({ error: "Application not found for this applicant." });
     }
 
-    // Store relative path so it can be served later
+    const currentStatus   = checkResult.rows[0].application_status;
+    const rejectionCount  = Number(checkResult.rows[0].payment_rejection_count) || 0;
+
+    // Only allow upload when:
+    //   • First time → APPLICATION_APPROVED
+    //   • Re-upload  → PAYMENT_RECEIPT_REJECTED (first rejection only, count === 1)
+    const allowedUploadStatuses = [
+      APPLICATION_STATUS.APPLICATION_APPROVED,
+      APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED,
+    ];
+
+    if (!allowedUploadStatuses.includes(currentStatus)) {
+      return res.status(400).json({
+        error: `Upload not allowed for current application status: ${currentStatus}`,
+      });
+    }
+
+    // Guard: if rejected twice the status is APPLICATION_REJECTED, blocked above.
+    // Extra safety check in case of data inconsistency.
+    if (
+      currentStatus === APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED &&
+      rejectionCount >= 2
+    ) {
+      return res.status(400).json({
+        error: "Application has been permanently rejected. Re-upload is not allowed.",
+      });
+    }
+
     const receiptPath = req.file.path;
 
-    // ── Update organisation table ─────────────────────────────────────────────
+    // ── Update organisation ────────────────────────────────────────────────
     await pool.query(
       `UPDATE organisation
        SET
          amount                  = $1,
          date_of_payment         = $2,
          money_receipt           = $3,
-         application_status      = 'PAYMENT_RECEIPT_UPLOADED',
-         update_on = NOW()
+         application_status      = $6,
+         money_receipt_upload_on = NOW(),
+         money_receipt_verify_on = NULL,
+         update_on               = NOW()
        WHERE application_id    = $4
          AND applicant_user_id = $5`,
-      [amount, dateOfPayment, receiptPath, applicationId, userId]
+      [
+        amount,
+        dateOfPayment,
+        receiptPath,
+        applicationId,
+        userId,
+        APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED,
+      ]
     );
 
-// inside uploadApplicantPaymentReceipt, after the UPDATE query:
-await saveApplicationHistory(
-  applicationId,
-  userId,                                        // applicant uploading receipt
-  null,
-  APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED,
-  checkResult.rows[0].application_status,        // old status
-  APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED,
-  null
-);
+    // ── History ───────────────────────────────────────────────────────────
+    await saveApplicationHistory(
+      applicationId,
+      userId,
+      null,
+      APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED,
+      currentStatus,
+      APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED,
+      rejectionCount >= 1 ? "Re-uploaded after JE rejection" : null
+    );
 
     await handleSlaOnStatusChange({
       applicationId,
-      newStatus: APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED,
+      newStatus:   APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED,
       actorUserId: userId,
-      assignedTo: null,
+      assignedTo:  null,
     });
+
     return res.json({
       message: "Payment receipt uploaded successfully.",
       applicationId,
@@ -140,8 +175,7 @@ await saveApplicationHistory(
   }
 };
 
-// ── GET /api/applicant-payment/receipt/:applicationId ───────────────────────
-// Serves the uploaded receipt file
+// ── GET /api/applicant-payment/receipt/:applicationId ────────────────────────
 const getMoneyReceiptFile = async (req, res) => {
   try {
     const { applicationId } = req.params;

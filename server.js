@@ -30,7 +30,9 @@ const slaConfigRoutes = require("./routes/slaConfigRoutes");
 const slaTrackingRoutes = require("./routes/slaTrackingRoutes");
 const publicDashboardRoutes = require("./routes/publicDashboardRoutes");
 const { cePendingRouter, eicPendingRouter } = require("./routes/pendingPieChartRoutes");
-
+const seDashboardStatusCountRoutes = require("./routes/seDashboardStatusCountRoutes");
+const aeeStatusCountRoutes = require("./routes/aeeStatusCountRoutes");
+   
 const app = express();
 
 app.use(cors());
@@ -67,6 +69,8 @@ app.use("/api/sla-tracking", slaTrackingRoutes);
 app.use("/api/public-dashboard", publicDashboardRoutes);
 app.use("/api/ce-pending",  cePendingRouter);
 app.use("/api/eic-pending", eicPendingRouter);
+app.use("/api/se-dashboard-applications", seDashboardStatusCountRoutes);
+app.use("/api/aee-dashboard-applications", aeeStatusCountRoutes);
 const PORT = process.env.PORT || 5000;
 
 const ensureOrganisationSchema = async () => {
