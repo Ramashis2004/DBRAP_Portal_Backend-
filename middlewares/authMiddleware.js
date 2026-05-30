@@ -77,6 +77,11 @@ const authMiddleware = async (req, res, next) => {
             `UPDATE login_history SET is_active = false, logout_time = NOW() WHERE session_id = $1`,
             [decoded.sessionId]
           );
+          // Also set is_logged = false for the user
+          await pool.query(
+            `UPDATE user_master SET is_logged = false WHERE id = $1`,
+            [decoded.id]
+          );
           return res.status(401).json({ error: "Session has expired due to inactivity. Please log in again." });
         }
       }
