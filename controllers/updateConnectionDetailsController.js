@@ -46,9 +46,9 @@ const getApplicationsForConnectionUpdate = async (req, res) => {
       [blockCode]
     );
 
-    console.log("Rows found:", result.rows.length);
+    //console.log("Rows found:", result.rows.length);
     if (result.rows.length > 0) {
-      console.log("Sample row:", result.rows[0]);
+      //console.log("Sample row:", result.rows[0]);
     } else {
       // ✅ Extra debug: check if block_code exists at all (any status)
       const debugResult = await db.query(
@@ -58,7 +58,6 @@ const getApplicationsForConnectionUpdate = async (req, res) => {
          LIMIT 5`,
         [blockCode]
       );
-      console.log("Rows for this block (any status):", debugResult.rows);
 
       // ✅ Extra debug: check all PAYMENT_RECEIPT_VERIFIED rows
       const statusResult = await db.query(
@@ -67,7 +66,6 @@ const getApplicationsForConnectionUpdate = async (req, res) => {
          WHERE UPPER(application_status::TEXT) = 'PAYMENT_RECEIPT_VERIFIED'
          LIMIT 5`
       );
-      console.log("All PAYMENT_RECEIPT_VERIFIED rows in DB:", statusResult.rows);
     }
 
     return res.json({ data: result.rows });
@@ -90,8 +88,7 @@ const updateConnectionDetails = async (req, res) => {
       meterMake,
     } = req.body;
 
-    console.log("=== updateConnectionDetails ===");
-    console.log("Payload received:", req.body);
+    
 
     if (!applicationId) {
       return res.status(400).json({ error: "applicationId is required." });
@@ -110,7 +107,6 @@ const updateConnectionDetails = async (req, res) => {
     }
 
     const app = fetchResult.rows[0];
-    console.log("Application found:", app);
 
     if (app.application_status.toUpperCase() !== "PAYMENT_RECEIPT_VERIFIED") {
       return res.status(400).json({
@@ -121,7 +117,6 @@ const updateConnectionDetails = async (req, res) => {
     const isSingleTap =
       String(app.type_of_connection || "").toLowerCase().trim() === "single tap";
 
-    console.log("isSingleTap:", isSingleTap);
 
     // ✅ Build query based on connection type
     if (isSingleTap) {
@@ -205,7 +200,6 @@ await saveApplicationHistory(
       actorUserId: req.body.officerId || null,
       assignedTo: req.body?.assignedTo ?? req.body?.assigned_to ?? null,
     });
-    console.log("Update successful for applicationId:", applicationId);
 
     return res.json({
       message: "Connection details updated successfully.",
