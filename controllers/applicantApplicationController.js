@@ -494,9 +494,9 @@ const getApplicantApplication = async (req, res) => {
       [userId]
     );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ exists: false });
-    }
+if (result.rows.length === 0) {
+  return res.status(200).json({ exists: false, application: null }); 
+}
 
     return res.status(200).json({ exists: true, application: result.rows[0] });
   } catch (error) {
