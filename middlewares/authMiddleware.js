@@ -18,6 +18,11 @@ const PUBLIC_ROUTES = [
 const authMiddleware = async (req, res, next) => {
   const { originalUrl, method } = req;
 
+  // Bypass authentication for all non-API routes (static assets, client-side routing, etc.)
+  if (!originalUrl.startsWith("/api")) {
+    return next();
+  }
+
   // Always allow OPTIONS requests for CORS preflight
   if (method === "OPTIONS") {
     return next();

@@ -1,4 +1,5 @@
 require("dotenv").config();
+const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const pool = require("./db/db");
@@ -75,6 +76,19 @@ app.use("/api/ce-pending",  cePendingRouter);
 app.use("/api/eic-pending", eicPendingRouter);
 app.use("/api/se-dashboard-applications", seDashboardStatusCountRoutes);
 app.use("/api/aee-dashboard-applications", aeeStatusCountRoutes);
+
+// Serve frontend static files in production
+const frontendDistPath = path.join(__dirname, "../../frontend/DBRAP_Portal_Frontend/dist");
+app.use(express.static(frontendDistPath));
+
+// Wildcard route to handle React Router client-side routing
+app.get(/.*/, (req, res, next) => {
+  if (req.path.startsWith("/api")) {
+    return next();
+  }
+  res.sendFile(path.join(frontendDistPath, "index.html"));
+});
+
 const PORT = process.env.PORT || 5000;
 
 const ensureOrganisationSchema = async () => {
