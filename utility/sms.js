@@ -12,10 +12,11 @@ const sendOTPSMS = async (mobile, otp) => {
     "sms_content",
     `Your OTP for Gramsewa Nidhi Portal is ${otp}. Please do not share this with anyone. Panchayati Raj & Drinking Water Dept. - Govt. of Odisha`
   );
-
   await axios.post("https://govtsms.odisha.gov.in/api/api.php", data, {
     headers: data.getHeaders(),
   });
+  console.log("Your Temporary Otp is :", otp);
+
 };
 
 module.exports = { sendOTPSMS };
