@@ -5,6 +5,7 @@ const cors = require("cors");
 const pool = require("./db/db");
 
 const authRoutes = require("./routes/authRoutes");
+const passwordRoutes = require("./routes/changePasswordRoutes");
 const organisationRoutes = require("./routes/organisationRoutes");
 const applicationReceivedRoutes = require("./routes/applicationReceivedRoutes");
 const ceApplicationReceivedRoutes = require("./routes/CEApplicationReceivedRoutes");
@@ -48,6 +49,7 @@ app.get("/api/officer/test", (req, res) => {
 
 app.use("/api/applicant-payment", applicantPaymentRoutes);
 app.use("/api/pending-applications", pendingApplicationsRoutes);
+app.use("/api/password", passwordRoutes);
 
 app.use("/api/auth", authRoutes);
 app.use("/api/organisation", organisationRoutes);

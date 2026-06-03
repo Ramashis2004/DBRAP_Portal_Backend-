@@ -269,6 +269,16 @@ const registerApplicantOrganisation = async (req, res) => {
     // ─────────────────────────────────────────────────────────────────────────
 
     await client.query("COMMIT");
+const savedBlockCode = insertResult.rows[0]?.block_code;
+const divisionResult = await pool.query(
+  `SELECT dv.division_name
+   FROM dbrap_lgd_block b
+   LEFT JOIN dbrap_division dv
+     ON dv.division_code::text = b.division_code::text
+   WHERE b.block_code = $1`,
+  [savedBlockCode]
+);
+const divisionName = divisionResult.rows[0]?.division_name || "";
 
     await handleSlaOnStatusChange({
       applicationId: application_id,
@@ -278,9 +288,12 @@ const registerApplicantOrganisation = async (req, res) => {
     });
 
     return res.status(201).json({
-      message: "Organisation registered successfully",
-      data: insertResult.rows[0],
-    });
+  message: "Organisation registered successfully",
+  data: {
+    ...insertResult.rows[0],
+    division_name: divisionName,   // ← now included
+  },
+});
   } catch (error) {
     try {
       await client.query("ROLLBACK");
@@ -427,7 +440,16 @@ const updateReturnedApplicantOrganisation = async (req, res) => {
     );
 
     await client.query("COMMIT");
-
+const savedBlockCode = updateResult.rows[0]?.block_code;
+const divisionResult = await pool.query(
+  `SELECT dv.division_name
+   FROM dbrap_lgd_block b
+   LEFT JOIN dbrap_division dv
+     ON dv.division_code::text = b.division_code::text
+   WHERE b.block_code = $1`,
+  [savedBlockCode]
+);
+const divisionName = divisionResult.rows[0]?.division_name || "";
     await handleSlaOnStatusChange({
       applicationId,
       newStatus: APPLICATION_STATUS.APPLICATION_SUBMITTED,
@@ -435,9 +457,12 @@ const updateReturnedApplicantOrganisation = async (req, res) => {
       assignedTo: null,
     });
 
-    return res.status(200).json({
-      message: "Application resubmitted successfully",
-      data: updateResult.rows[0],
+   return res.status(200).json({
+  message: "Application resubmitted successfully",
+  data: {
+    ...updateResult.rows[0],
+    division_name: divisionName,   // ← now included
+  },
     });
   } catch (error) {
     try { await client.query("ROLLBACK"); } catch {}

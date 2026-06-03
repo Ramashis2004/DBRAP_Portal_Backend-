@@ -39,6 +39,7 @@ const findApplicantByMobile = async (mobileNo) => {
   const result = await pool.query(
     `
       SELECT id, user_name, organisation_name, login_id, email_id, mobile_no, role_id, user_type_id,
+             COALESCE(passwordchange_flag, 'N') AS passwordchange_flag,
              COALESCE(is_logged, false) AS is_logged
       FROM user_master
       WHERE mobile_no = $1
@@ -82,6 +83,7 @@ const checkApplicantMobile = async (req, res) => {
         mobileNo: applicant.mobile_no,
         roleId: applicant.role_id,
         userTypeId: applicant.user_type_id,
+        passwordChangeRequired: applicant.passwordchange_flag !== "Y",
       },
     });
   } catch (error) {
@@ -228,6 +230,7 @@ const loginApplicantWithPassword = async (req, res) => {
           role_id,
           user_type_id,
           active_flag,
+          COALESCE(passwordchange_flag, 'N') AS passwordchange_flag,
           COALESCE(is_logged, false) AS is_logged
         FROM user_master
         WHERE login_id = $1
@@ -312,6 +315,7 @@ if (applicant.is_logged && forceLogin) {
         mobileNo:          applicant.mobile_no,
         roleId:            applicant.role_id,
         userTypeId:        applicant.user_type_id,
+        passwordChangeRequired: applicant.passwordchange_flag !== "Y",
       },
     });
   } catch (error) {

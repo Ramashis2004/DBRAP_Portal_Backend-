@@ -16,28 +16,24 @@ const APPROVED_STATUSES = [
 
 // ─── Auth helper ─────────────────────────────────────────────────────────────
 
+const CE_TYPE_ID  = 6;
+const ACE_TYPE_ID = 5; // ← replace with actual ACE user_type_id from user_type_master
+
 const getCEOfficer = async (userId) => {
   const result = await pool.query(
     `SELECT id, login_id, user_type_id, circle_code
-       FROM user_master
-      WHERE id = $1
-      LIMIT 1`,
+       FROM user_master WHERE id = $1 LIMIT 1`,
     [userId]
   );
-
   const officer = result.rows[0] || null;
   if (!officer) return null;
-  if (Number(officer.user_type_id) !== 6) return { unauthorized: true };
-
+  const typeId = Number(officer.user_type_id);
+  if (typeId !== CE_TYPE_ID && typeId !== ACE_TYPE_ID) return { unauthorized: true };
   const circleCodes = String(officer.circle_code || "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-
+    .split(",").map((s) => s.trim()).filter(Boolean);
   if (!circleCodes.length) return { missingCircle: true };
   return { ...officer, circleCodes };
 };
-
 const ensureCEOfficer = async (req, res) => {
   const userId = String(req.query.userId || "").trim();
   if (!userId) {

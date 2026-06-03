@@ -284,6 +284,38 @@ const generateLoginId = async ({ userTypeName, districtCode, divisionCode, block
   return `${prefix}${String(maxSerial + 1).padStart(2, "0")}`;
 };
 
+const generateLoginIdFromPrefix = async (prefixValue) => {
+  const prefix = String(prefixValue || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+
+  if (!prefix) {
+    throw new Error("Unable to generate login ID prefix");
+  }
+
+  const existingLoginsResult = await pool.query(
+    `
+      SELECT login_id
+      FROM user_master
+      WHERE login_id LIKE $1
+    `,
+    [`${prefix}%`]
+  );
+
+  const maxSerial = existingLoginsResult.rows.reduce((currentMax, row) => {
+    const match = row.login_id?.match(new RegExp(`^${escapeRegExp(prefix)}(\\d+)$`));
+
+    if (!match) {
+      return currentMax;
+    }
+
+    return Math.max(currentMax, Number(match[1]));
+  }, 0);
+
+  return `${prefix}${String(maxSerial + 1).padStart(2, "0")}`;
+};
+
 const generateApplicantUserId = async (client) => {
   await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", ["user_master_applicant_id"]);
 
@@ -431,6 +463,7 @@ const fetchOfficerById = async (userId) => {
   um.district_code,
   um.division_code,
   um.block_code,
+  COALESCE(um.passwordchange_flag, 'N') AS passwordchange_flag,
   COALESCE(utm.type_name, dr.role_name) AS role_name
 FROM user_master um
 LEFT JOIN user_type_master utm
@@ -578,6 +611,7 @@ const loginOfficer = async (req, res) => {
           um.role_id,
           um.user_type_id,
           um.active_flag,
+          COALESCE(um.passwordchange_flag, 'N') AS passwordchange_flag,
           COALESCE(um.is_logged, false) AS is_logged,
           COALESCE(utm.type_name, dr.role_name) AS role_name
         FROM user_master um
@@ -660,6 +694,7 @@ const loginOfficer = async (req, res) => {
         roleId: officer.role_id,
         userTypeId: officer.user_type_id,
         roleName: officer.role_name,
+        passwordChangeRequired: officer.passwordchange_flag !== "Y",
       },
     });
   } catch (error) {
@@ -710,7 +745,8 @@ const getOfficerDashboardConfig = async (req, res) => {
   circle_code: officer.circle_code,
   district_code: officer.district_code,
   division_code: officer.division_code,
-  block_code: officer.block_code
+  block_code: officer.block_code,
+  passwordChangeRequired: officer.passwordchange_flag !== "Y"
 },
       dashboard: {
         navigation: {
@@ -1143,7 +1179,8 @@ const createOfficerUser = async (req, res) => {
 
     const selectedUserTypeName    = String(userTypeResult.rows[0].type_name || "").trim().toUpperCase();
     const requiresBlockSelection  = selectedUserTypeName === "JE";
-    const requiresSubTypeSelection = selectedUserTypeName === "CE";
+    const requiresSubTypeSelection = ["CE", "ACE"].includes(selectedUserTypeName);
+    const isAceUserType           = selectedUserTypeName === "ACE";
     const isEicUserType           = selectedUserTypeName === "EIC";
     const requiresLocationSelection = !requiresSubTypeSelection && !isEicUserType;
 
@@ -1191,7 +1228,7 @@ const createOfficerUser = async (req, res) => {
 
     if (requiresSubTypeSelection) {
       if (!subTypeId) {
-        return res.status(400).json({ error: "Subtype is required for CE users" });
+        return res.status(400).json({ error: "Subtype is required for the selected user type" });
       }
 
       const subTypeResult = await pool.query(
@@ -1210,7 +1247,10 @@ const createOfficerUser = async (req, res) => {
         return res.status(400).json({ error: "Invalid subtype selected for the chosen user type" });
       }
 
-      generatedLoginId = String(subTypeResult.rows[0].sub_type_name || "").trim();
+      const subTypeName = String(subTypeResult.rows[0].sub_type_name || "").trim();
+      generatedLoginId = isAceUserType
+        ? await generateLoginIdFromPrefix(subTypeName)
+        : subTypeName;
 
       if (!generatedLoginId) {
         return res.status(400).json({ error: "Invalid subtype selected for the chosen user type" });
@@ -1220,7 +1260,7 @@ const createOfficerUser = async (req, res) => {
       const mappedCircleNames = await getSubtypeCircleNames(subTypeResult.rows[0]);
 
       if (mappedCircleCodes.length === 0) {
-        return res.status(400).json({ error: "Circle mapping is not configured for the selected CE subtype" });
+        return res.status(400).json({ error: "Circle mapping is not configured for the selected subtype" });
       }
 
       if (mappedCircleNames.length !== mappedCircleCodes.length) {

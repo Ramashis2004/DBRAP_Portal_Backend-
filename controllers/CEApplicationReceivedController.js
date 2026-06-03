@@ -65,9 +65,10 @@ const getCEApplicationReceivedApplications = async (req, res) => {
     const officer    = officerResult.rows[0];
     const userTypeId = Number(officer.user_type_id);
 
-    if (userTypeId !== 6) {
-      return res.status(403).json({ error: "Unauthorized: CE user type required" });
-    }
+    const ACE_TYPE_ID = 5; 
+if (userTypeId !== 6 && userTypeId !== ACE_TYPE_ID) {
+  return res.status(403).json({ error: "Unauthorized: CE or ACE user type required" });
+}
 
     const ceCircleCodes = String(officer.circle_code || "")
       .split(",")
