@@ -260,6 +260,18 @@ const loginApplicantWithPassword = async (req, res) => {
       return res.status(401).json({ error: "Invalid User ID or password" });
     }
 
+    const passwordChangeRequired = applicant.passwordchange_flag !== "Y";
+
+    if (passwordChangeRequired) {
+      return res.status(200).json({
+        passwordChangeRequired: true,
+        username: applicant.login_id,
+        role: "applicant",
+        message: "Password change required before login",
+      });
+    }
+
+
     if (applicant.is_logged && !forceLogin) {
       return res.status(409).json({
         code: "ALREADY_LOGGED_IN",

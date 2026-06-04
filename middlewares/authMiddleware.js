@@ -13,6 +13,7 @@ const PUBLIC_ROUTES = [
   { path: /^\/api\/public-dashboard\/.*$/, methods: ["GET"] },
   { path: /^\/api\/officer\/forgot-password\/.*$/, methods: ["POST"] },
   { path: /^\/api\/officer\/test$/, methods: ["GET"] },
+  { path: /^\/api\/password\/change$/, methods: ["POST"] },
 ];
 
 const authMiddleware = async (req, res, next) => {
@@ -36,11 +37,7 @@ const authMiddleware = async (req, res, next) => {
     return route.path.test(cleanPath) && route.methods.includes(method);
   });
 
-  if (isPublic) {
-    return next();
-  }
-
-  // Validate JWT
+  // Extract JWT
   let token = null;
   const authHeader = req.headers.authorization || req.headers.Authorization;
   if (authHeader && authHeader.startsWith("Bearer ")) {
@@ -49,12 +46,25 @@ const authMiddleware = async (req, res, next) => {
     token = req.query.token;
   }
 
+  if (isPublic) {
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        req.user = decoded;
+      } catch (err) {
+        // Ignore token verification errors for public routes
+      }
+    }
+    return next();
+  }
+
   if (!token) {
     return res.status(401).json({ error: "Access denied. No token provided." });
   }
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded; // Attach user info to request
+
 
     // Verify if this specific session is still active in the database
     if (decoded && decoded.sessionId) {

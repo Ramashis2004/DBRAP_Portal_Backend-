@@ -643,6 +643,18 @@ const loginOfficer = async (req, res) => {
       return res.status(401).json({ error: "Invalid officer credentials" });
     }
 
+    const passwordChangeRequired = officer.passwordchange_flag !== "Y";
+
+    if (passwordChangeRequired) {
+      return res.status(200).json({
+        passwordChangeRequired: true,
+        username: officer.login_id,
+        role: "officer",
+        message: "Password change required before login",
+      });
+    }
+
+
     if (officer.is_logged && !forceLogin) {
       return res.status(409).json({
         code: "ALREADY_LOGGED_IN",
