@@ -4,6 +4,8 @@ const express = require("express");
 const cors = require("cors");
 const pool = require("./db/db");
 
+const userManualRouter = require("./routes/userManualRoutes");
+
 const authRoutes = require("./routes/authRoutes");
 const passwordRoutes = require("./routes/changePasswordRoutes");
 const organisationRoutes = require("./routes/organisationRoutes");
@@ -41,12 +43,13 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use("/api/user-manual", userManualRouter);
+
 app.use(authMiddleware);
 app.use(activityLogMiddleware);
 app.get("/api/officer/test", (req, res) => {
   res.json({ ok: true });
 });
-
 app.use("/api/applicant-payment", applicantPaymentRoutes);
 app.use("/api/pending-applications", pendingApplicationsRoutes);
 app.use("/api/password", passwordRoutes);
