@@ -3,14 +3,25 @@ const express = require("express");
 const router  = express.Router();
 const fs      = require("fs");
 const jwt     = require("jsonwebtoken");
+const path    = require("path");
 
-const MANUAL_PATH =
-  process.env.USER_MANUAL_PATH ||
-  "D:\\DBRAP Document\\User Manual\\officer-user-manual.pdf";
+const envPath = process.env.USER_MANUAL_PATH || "D:\\DBRAP Document\\User Manual";
 
-const APPLICANT_MANUAL_PATH =
-  process.env.APPLICANT_USER_MANUAL_PATH ||
-  "D:\\DBRAP Document\\User Manual\\applicant-user-manual.pdf";
+// Resolve officer user manual path
+const MANUAL_PATH = envPath.toLowerCase().endsWith(".pdf")
+  ? envPath
+  : path.join(envPath, "officer-user-manual.pdf");
+
+// Resolve applicant user manual path
+let APPLICANT_MANUAL_PATH;
+if (process.env.APPLICANT_USER_MANUAL_PATH) {
+  APPLICANT_MANUAL_PATH = process.env.APPLICANT_USER_MANUAL_PATH.toLowerCase().endsWith(".pdf")
+    ? process.env.APPLICANT_USER_MANUAL_PATH
+    : path.join(process.env.APPLICANT_USER_MANUAL_PATH, "applicant-user-manual.pdf");
+} else {
+  const baseDir = envPath.toLowerCase().endsWith(".pdf") ? path.dirname(envPath) : envPath;
+  APPLICANT_MANUAL_PATH = path.join(baseDir, "applicant-user-manual.pdf");
+}
 
 // ── Auth middleware (token from header OR query param for iframe) ──────────────
 const authenticate = (req, res, next) => {
