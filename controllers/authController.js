@@ -240,10 +240,22 @@ const getDivisionSerialForDistrict = async ({ districtCode, divisionCode }) => {
 };
 
 const generateLoginId = async ({ userTypeName, districtCode, divisionCode, blockCode }) => {
-  const normalizedUserTypeName = String(userTypeName || "")
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
+  const rawTypeName = String(userTypeName || "").trim().toUpperCase();
+
+  // ── Prefix map: handles special characters like SE/EE → SE ───────────────
+  const PREFIX_MAP = {
+    "SE/EE": "SE",
+    "AEE":   "AEE",
+    "JE":    "JE",
+    "CE":    "CE",
+    "ACE":   "ACE",
+    "EIC":   "EIC",
+  };
+
+  // Use mapped prefix if available, else strip non-alphanumeric as fallback
+  const normalizedUserTypeName =
+    PREFIX_MAP[rawTypeName] ??
+    rawTypeName.replace(/[^A-Z0-9]/g, "");
 
   let prefix = "";
 
@@ -255,7 +267,8 @@ const generateLoginId = async ({ userTypeName, districtCode, divisionCode, block
     const divisionSerial = await getDivisionSerialForDistrict({ districtCode, divisionCode });
     prefix = `AEE${String(districtCode || "").trim()}${divisionSerial}`;
   } else {
-    prefix = `${normalizedUserTypeName}${districtCode}`;
+    // SE/EE → "SE" + districtCode, others follow same pattern
+    prefix = `${normalizedUserTypeName}${String(districtCode || "").trim()}`;
   }
 
   if (!prefix) {
@@ -263,27 +276,18 @@ const generateLoginId = async ({ userTypeName, districtCode, divisionCode, block
   }
 
   const existingLoginsResult = await pool.query(
-    `
-      SELECT login_id
-      FROM user_master
-      WHERE login_id LIKE $1
-    `,
+    `SELECT login_id FROM user_master WHERE login_id LIKE $1`,
     [`${prefix}%`]
   );
 
   const maxSerial = existingLoginsResult.rows.reduce((currentMax, row) => {
     const match = row.login_id?.match(new RegExp(`^${escapeRegExp(prefix)}(\\d+)$`));
-
-    if (!match) {
-      return currentMax;
-    }
-
+    if (!match) return currentMax;
     return Math.max(currentMax, Number(match[1]));
   }, 0);
 
   return `${prefix}${String(maxSerial + 1).padStart(2, "0")}`;
 };
-
 const generateLoginIdFromPrefix = async (prefixValue) => {
   const prefix = String(prefixValue || "")
     .trim()
@@ -1141,6 +1145,7 @@ const createOfficerUser = async (req, res) => {
       districtCode,
       divisionCode,
       blockCode,
+      replaceUserId,
     } = req.body;
 
     if (!userTypeId || !userName || !designation || !mobileNo) {
@@ -1337,16 +1342,19 @@ const createOfficerUser = async (req, res) => {
     const hashedPassword    = hashPassword(generatedPassword);
 
     const duplicateResult = await pool.query(
-      `
-        SELECT id
-        FROM user_master
-        WHERE login_id = $1
-           OR mobile_no = $2
-           OR ($3::varchar IS NOT NULL AND email_id = $3::varchar)
-        LIMIT 1
-      `,
-      [generatedLoginId, trimmedMobileNo, trimmedEmailId || null]
-    );
+  `
+    SELECT id
+    FROM user_master
+    WHERE (
+      login_id = $1
+      OR mobile_no = $2
+      OR ($3::varchar IS NOT NULL AND email_id = $3::varchar)
+    )
+    AND ($4::varchar IS NULL OR id != $4::varchar)
+    LIMIT 1
+  `,
+  [generatedLoginId, trimmedMobileNo, trimmedEmailId || null, replaceUserId || null]
+);
 
     if (duplicateResult.rows.length > 0) {
       return res.status(409).json({ error: "Login ID, mobile number, or email address already exists" });
@@ -1373,7 +1381,18 @@ const createOfficerUser = async (req, res) => {
 
     const nextSerial    = Number(serialResult.rows[0]?.last_serial || 0) + 1;
     const generatedUserId = `USER${String(nextSerial).padStart(5, "0")}`;
-
+// If updating an existing user, deactivate them first
+if (replaceUserId) {
+  await client.query(
+    `UPDATE user_master SET active_flag = 'N', is_logged = false WHERE id = $1`,
+    [String(replaceUserId)]
+  );
+  // Also close their active session
+  await client.query(
+    `UPDATE login_history SET is_active = false, logout_time = NOW() WHERE user_id = $1 AND is_active = true`,
+    [String(replaceUserId)]
+  );
+}
     const insertResult = await client.query(
       `
         INSERT INTO user_master (
@@ -1469,7 +1488,97 @@ const createOfficerUser = async (req, res) => {
     client.release();
   }
 };
+const checkExistingUserByType = async (req, res) => {
+  try {
+    const { userTypeId, subTypeId, circleCode, districtCode, divisionCode, blockCode } = req.query;
 
+    if (!userTypeId) return res.status(400).json({ error: "User type is required" });
+
+    const userTypeResult = await pool.query(
+      `SELECT id, type_name FROM user_type_master WHERE id = $1 AND COALESCE(is_active, true) = true LIMIT 1`,
+      [Number(userTypeId)]
+    );
+
+    if (userTypeResult.rows.length === 0) return res.status(400).json({ error: "Invalid user type" });
+
+    const typeName = String(userTypeResult.rows[0].type_name || "").trim().toUpperCase();
+
+    let query = "";
+    let params = [];
+
+    if (typeName === "EIC") {
+      query = `
+        SELECT um.*, COALESCE(utm.type_name, dr.role_name) AS role_name
+        FROM user_master um
+        LEFT JOIN user_type_master utm ON utm.id = um.user_type_id
+        LEFT JOIN dbrap_role dr ON dr.role_id::text = um.role_id
+        WHERE um.user_type_id = $1 AND um.active_flag = 'Y' LIMIT 1`;
+      params = [Number(userTypeId)];
+
+    } else if (["CE", "ACE"].includes(typeName)) {
+      if (!subTypeId) return res.status(400).json({ error: "Subtype is required" });
+      const subTypeResult = await pool.query(
+        `SELECT sub_type_name FROM sub_user_type_master WHERE id = $1 LIMIT 1`,
+        [Number(subTypeId)]
+      );
+      const subTypeName = String(subTypeResult.rows[0]?.sub_type_name || "").trim();
+      query = `
+        SELECT um.*, COALESCE(utm.type_name, dr.role_name) AS role_name
+        FROM user_master um
+        LEFT JOIN user_type_master utm ON utm.id = um.user_type_id
+        LEFT JOIN dbrap_role dr ON dr.role_id::text = um.role_id
+        WHERE um.login_id = $1 AND um.active_flag = 'Y' LIMIT 1`;
+      params = [subTypeName];
+
+    } else if (typeName === "JE") {
+      if (!blockCode) return res.status(400).json({ error: "Block is required" });
+      query = `
+        SELECT um.*, COALESCE(utm.type_name, dr.role_name) AS role_name
+        FROM user_master um
+        LEFT JOIN user_type_master utm ON utm.id = um.user_type_id
+        LEFT JOIN dbrap_role dr ON dr.role_id::text = um.role_id
+        WHERE um.user_type_id = $1 AND um.block_code = $2 AND um.active_flag = 'Y' LIMIT 1`;
+      params = [Number(userTypeId), String(blockCode).trim()];
+
+    } else {
+      // SE/EE, AEE — match by division
+      if (!divisionCode) return res.status(400).json({ error: "Division is required" });
+      query = `
+        SELECT um.*, COALESCE(utm.type_name, dr.role_name) AS role_name
+        FROM user_master um
+        LEFT JOIN user_type_master utm ON utm.id = um.user_type_id
+        LEFT JOIN dbrap_role dr ON dr.role_id::text = um.role_id
+        WHERE um.user_type_id = $1 AND um.division_code = $2 AND um.active_flag = 'Y' LIMIT 1`;
+      params = [Number(userTypeId), String(divisionCode).trim()];
+    }
+
+    const result = await pool.query(query, params);
+
+    if (result.rows.length === 0) {
+      return res.status(200).json({ exists: false });
+    }
+
+    const user = result.rows[0];
+    return res.status(200).json({
+      exists: true,
+      user: {
+        id: user.id,
+        userName: user.user_name,
+        loginId: user.login_id,
+        mobileNo: user.mobile_no,
+        emailId: user.email_id,
+        designation: user.designation,
+        circleCode: user.circle_code,
+        districtCode: user.district_code,
+        divisionCode: user.division_code,
+        blockCode: user.block_code,
+        roleName: user.role_name,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ error: "Server Error" });
+  }
+};
 const registerApplicant = async (req, res) => {
   const client = await pool.connect();
 
@@ -1642,6 +1751,7 @@ const checkSessionValid = async (req, res) => {
   }
 };
 module.exports = {
+    checkExistingUserByType,
   checkApplicantMobileAvailability,
   createOfficerUser,
   getOfficerDashboardConfig,

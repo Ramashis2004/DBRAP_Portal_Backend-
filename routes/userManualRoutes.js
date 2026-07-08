@@ -5,25 +5,23 @@ const fs      = require("fs");
 const jwt     = require("jsonwebtoken");
 const path    = require("path");
 
-const envPath = process.env.USER_MANUAL_PATH || "D:\\DBRAP Document\\User Manual";
+// ── Base path from env ────────────────────────────────────────────────────────
+const BASE_PATH = process.env.USER_MANUAL_PATH;
+if (!BASE_PATH) throw new Error("Missing env variable: USER_MANUAL_PATH");
 
-// Resolve officer user manual path
-const MANUAL_PATH = envPath.toLowerCase().endsWith(".pdf")
-  ? envPath
-  : path.join(envPath, "officer-user-manual.pdf");
+const findManualByRole = (role) => {
+  
+  if (!fs.existsSync(BASE_PATH)) return null;
+  
+  const files = fs.readdirSync(BASE_PATH);
+  
+  const match = files.find(
+    (f) => f.toLowerCase().endsWith(".pdf") && f.toLowerCase().includes(role)
+  );
+  return match ? path.join(BASE_PATH, match) : null;
+};
 
-// Resolve applicant user manual path
-let APPLICANT_MANUAL_PATH;
-if (process.env.APPLICANT_USER_MANUAL_PATH) {
-  APPLICANT_MANUAL_PATH = process.env.APPLICANT_USER_MANUAL_PATH.toLowerCase().endsWith(".pdf")
-    ? process.env.APPLICANT_USER_MANUAL_PATH
-    : path.join(process.env.APPLICANT_USER_MANUAL_PATH, "applicant-user-manual.pdf");
-} else {
-  const baseDir = envPath.toLowerCase().endsWith(".pdf") ? path.dirname(envPath) : envPath;
-  APPLICANT_MANUAL_PATH = path.join(baseDir, "applicant-user-manual.pdf");
-}
-
-// ── Auth middleware (token from header OR query param for iframe) ──────────────
+// ── Auth middleware ───────────────────────────────────────────────────────────
 const authenticate = (req, res, next) => {
   const token =
     req.query.token ||
@@ -35,58 +33,41 @@ const authenticate = (req, res, next) => {
 
   try {
     req.user = jwt.verify(token, process.env.JWT_SECRET);
+
     next();
   } catch {
     return res.status(401).json({ error: "Invalid or expired token." });
   }
 };
 
-// ── Authenticated routes (dashboard officers) ─────────────────────────────────
+// ── Role authorization middleware ─────────────────────────────────────────────
+const authorizeRole = (req, res, next) => {
+  if (!req.user?.roleId) {
+    return res.status(403).json({ error: "Access denied. No role assigned." });
+  }
+  req.manualType = "officer";
+  next();
+};
 
-// GET /api/user-manual/view
-router.get("/view", authenticate, (req, res) => {
-  if (!fs.existsSync(MANUAL_PATH)) {
+// ── Reusable PDF sender ───────────────────────────────────────────────────────
+const sendPdf = (res, filePath, disposition) => {
+  if (!filePath) {
     return res.status(404).json({ error: "User manual not found." });
   }
   res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", "inline; filename=user-manual.pdf");
+  res.setHeader("Content-Disposition", `${disposition}; filename="${path.basename(filePath)}"`);
   res.setHeader("Cache-Control", "no-cache");
-  fs.createReadStream(MANUAL_PATH).pipe(res);
-});
+  fs.createReadStream(filePath).pipe(res);
+};
 
-// GET /api/user-manual/download
-router.get("/download", authenticate, (req, res) => {
-  if (!fs.existsSync(MANUAL_PATH)) {
-    return res.status(404).json({ error: "User manual not found." });
-  }
-  res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", "attachment; filename=DBRAP_Officer_User_Manual.pdf");
-  res.setHeader("Cache-Control", "no-cache");
-  fs.createReadStream(MANUAL_PATH).pipe(res);
-});
+// ── Officer routes (authenticated + role check) ───────────────────────────────
+router.get("/view",     authenticate, authorizeRole, (req, res) =>
+  sendPdf(res, findManualByRole(req.manualType), "inline"));
 
-// ── Public routes (landing page — no auth required) ───────────────────────────
-
-// GET /api/user-manual/public/view
-router.get("/public/view", (req, res) => {
-  if (!fs.existsSync(APPLICANT_MANUAL_PATH)) {
-    return res.status(404).json({ error: "User manual not found." });
-  }
-  res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", "inline; filename=user-manual.pdf");
-  res.setHeader("Cache-Control", "no-cache");
-  fs.createReadStream(APPLICANT_MANUAL_PATH).pipe(res);
-});
-
-// GET /api/user-manual/public/download
-router.get("/public/download", (req, res) => {
-  if (!fs.existsSync(APPLICANT_MANUAL_PATH)) {
-    return res.status(404).json({ error: "User manual not found." });
-  }
-  res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", "attachment; filename=DBRAP_Applicant_User_Manual.pdf");
-  res.setHeader("Cache-Control", "no-cache");
-  fs.createReadStream(APPLICANT_MANUAL_PATH).pipe(res);
-});
+router.get("/download", authenticate, authorizeRole, (req, res) =>
+  sendPdf(res, findManualByRole(req.manualType), "attachment"));
+// ── Applicant routes (public — no auth required) ──────────────────────────────
+router.get("/public/view",     (req, res) => sendPdf(res, findManualByRole("applicant"), "inline"));
+router.get("/public/download", (req, res) => sendPdf(res, findManualByRole("applicant"), "attachment"));
 
 module.exports = router;

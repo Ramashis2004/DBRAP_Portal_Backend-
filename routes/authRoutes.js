@@ -7,10 +7,12 @@ const {
   logoutOfficer,
   checkSessionValid,  
   registerApplicant,
+  checkExistingUserByType,
 } = require("../controllers/authController");
 
 const router = express.Router();
 
+router.get("/users/check-existing", checkExistingUserByType);
 router.post("/login", loginOfficer);
 router.post("/logout", logoutOfficer);
 router.get("/applicant/check-mobile", checkApplicantMobileAvailability);
