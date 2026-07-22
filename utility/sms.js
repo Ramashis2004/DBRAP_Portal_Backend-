@@ -15,8 +15,7 @@ const sendOTPSMS = async (mobile, otp) => {
   await axios.post("https://govtsms.odisha.gov.in/api/api.php", data, {
     headers: data.getHeaders(),
   });
-  console.log("Your Temporary Otp is :", otp);
-
+ 
 };
 
 module.exports = { sendOTPSMS };

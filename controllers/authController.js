@@ -622,6 +622,7 @@ const loginOfficer = async (req, res) => {
         LEFT JOIN user_type_master utm ON utm.id = um.user_type_id
         LEFT JOIN dbrap_role dr ON dr.role_id::text = um.role_id
         WHERE um.login_id = $1
+        ORDER BY CASE WHEN um.active_flag = 'Y' THEN 0 ELSE 1 END, um.id DESC
         LIMIT 1
       `,
       [username.trim()]

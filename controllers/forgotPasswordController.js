@@ -1,5 +1,3 @@
-
-
 const crypto = require("crypto");
 const pool   = require("../db/db"); // same pool your existing code uses
 
@@ -24,12 +22,14 @@ const SMS_TIMEOUT_MS     = Number(process.env.SMS_TIMEOUT_MS) || 10000;
 // ── In-memory OTP store ───────────────────────────────────────────────────────
 // Structure: {
 //   username → {
+//     userId,
 //     otp,
 //     expiresAt,
 //     mobileNo,
 //     verified,
 //     resendAvailableAt,
-//     resendBlockedUntil
+//     resendBlockedUntil,
+//     verifyAttempts
 //   }
 // }
 const otpSessionStore = new Map();
@@ -40,11 +40,21 @@ const OTP_RESEND_COOLDOWN_MS = 25 * 1000;
 const OTP_MAX_SEND_ATTEMPTS = 3;
 const OTP_RESEND_LOCKOUT_MS = 30 * 60 * 1000;
 
+const OTP_MAX_VERIFY_ATTEMPTS = 5;
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const generateOtp = () =>
   String(Math.floor(Math.random() * 10 ** OTP_MAX_DIGITS)).padStart(OTP_MAX_DIGITS, "0");
 
 const normalizeMobile = (n) => String(n || "").trim().replace(/\D/g, "");
+
+
+const timingSafeEqualStrings = (a, b) => {
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+};
 
 const fetchWithTimeout = async (url, options, timeoutMs) => {
   const controller = new AbortController();
@@ -122,12 +132,13 @@ const sendOtp = async (req, res) => {
       });
     }
 
-    // Look up the officer by login_id
+    // Prefer the active officer when duplicate login IDs exist.
     const result = await pool.query(
       `
         SELECT id, login_id, mobile_no, active_flag, COALESCE(user_otp_count, 0) AS user_otp_count
         FROM user_master
         WHERE login_id = $1
+        ORDER BY CASE WHEN active_flag = 'Y' THEN 0 ELSE 1 END, id DESC
         LIMIT 1
       `,
       [trimmed]
@@ -168,24 +179,26 @@ const sendOtp = async (req, res) => {
           UPDATE user_master
           SET user_otp_count = 0,
               user_otp = NULL
-          WHERE login_id = $1
+          WHERE id = $1
         `,
-        [trimmed]
+        [officer.id]
       );
     }
 
     const otp = generateOtp();
-    console.log(`[OTP DEBUG] Generated OTP for user "${trimmed}": ${otp}`);
+   
     const nextSendCount = currentSendCount + 1;
     const isLockedOutAfterThisSend = nextSendCount >= OTP_MAX_SEND_ATTEMPTS;
     const resendAvailableAt = isLockedOutAfterThisSend ? now + OTP_RESEND_LOCKOUT_MS : now + OTP_RESEND_COOLDOWN_MS;
 
     // Store OTP (overwrite any previous entry for this username)
     otpSessionStore.set(trimmed, {
+      userId: officer.id,
       expiresAt: Date.now() + OTP_TTL_MS,
       verified: false,
       resendAvailableAt,
       resendBlockedUntil: isLockedOutAfterThisSend ? now + OTP_RESEND_LOCKOUT_MS : 0,
+      verifyAttempts: 0,
     });
 
     await pool.query(
@@ -193,9 +206,9 @@ const sendOtp = async (req, res) => {
         UPDATE user_master
         SET user_otp = $1,
             user_otp_count = $2
-        WHERE login_id = $3
+        WHERE id = $3
       `,
-      [otp, nextSendCount, trimmed]
+      [otp, nextSendCount, officer.id]
     );
 
     // Auto-cleanup after TTL
@@ -250,15 +263,29 @@ const verifyOtp = async (req, res) => {
       return res.status(400).json({ error: "No OTP request found. Please request a new OTP." });
     }
 
-    const storedResult = await pool.query(
-      `
-        SELECT COALESCE(user_otp, '') AS user_otp
-        FROM user_master
-        WHERE login_id = $1
-        LIMIT 1
-      `,
-      [trimmedUsername]
-    );
+    const storedResult = entry.userId
+      ? await pool.query(
+          `
+            SELECT COALESCE(user_otp, '') AS user_otp
+            FROM user_master
+            WHERE id = $1
+              AND login_id = $2
+              AND COALESCE(active_flag, 'N') = 'Y'
+            LIMIT 1
+          `,
+          [entry.userId, trimmedUsername]
+        )
+      : await pool.query(
+          `
+            SELECT id, COALESCE(user_otp, '') AS user_otp
+            FROM user_master
+            WHERE login_id = $1
+              AND COALESCE(active_flag, 'N') = 'Y'
+            ORDER BY id DESC
+            LIMIT 1
+          `,
+          [trimmedUsername]
+        );
 
     if (storedResult.rows.length === 0 || !storedResult.rows[0].user_otp) {
       otpSessionStore.delete(trimmedUsername);
@@ -270,7 +297,26 @@ const verifyOtp = async (req, res) => {
       return res.status(400).json({ error: "OTP has expired. Please request a new one." });
     }
 
-    if (storedResult.rows[0].user_otp !== trimmedOtp) {
+  
+    if (!timingSafeEqualStrings(storedResult.rows[0].user_otp, trimmedOtp)) {
+      entry.verifyAttempts = (entry.verifyAttempts || 0) + 1;
+
+      if (entry.verifyAttempts >= OTP_MAX_VERIFY_ATTEMPTS) {
+        otpSessionStore.delete(trimmedUsername);
+        await pool.query(
+          `
+            UPDATE user_master
+            SET user_otp = NULL
+            WHERE id = $1
+          `,
+          [entry.userId || storedResult.rows[0].id]
+        );
+        return res.status(400).json({
+          error: "Too many incorrect attempts. Please request a new OTP.",
+        });
+      }
+
+      otpSessionStore.set(trimmedUsername, entry);
       return res.status(400).json({ error: "Incorrect OTP. Please try again." });
     }
 
@@ -308,15 +354,29 @@ const resetPassword = async (req, res) => {
       return res.status(400).json({ error: "Session expired. Please start the process again." });
     }
 
-    const storedResult = await pool.query(
-      `
-        SELECT COALESCE(user_otp, '') AS user_otp
-        FROM user_master
-        WHERE login_id = $1
-        LIMIT 1
-      `,
-      [trimmedUsername]
-    );
+    const storedResult = entry.userId
+      ? await pool.query(
+          `
+            SELECT COALESCE(user_otp, '') AS user_otp
+            FROM user_master
+            WHERE id = $1
+              AND login_id = $2
+              AND COALESCE(active_flag, 'N') = 'Y'
+            LIMIT 1
+          `,
+          [entry.userId, trimmedUsername]
+        )
+      : await pool.query(
+          `
+            SELECT id, COALESCE(user_otp, '') AS user_otp
+            FROM user_master
+            WHERE login_id = $1
+              AND COALESCE(active_flag, 'N') = 'Y'
+            ORDER BY id DESC
+            LIMIT 1
+          `,
+          [trimmedUsername]
+        );
 
     if (storedResult.rows.length === 0 || !storedResult.rows[0].user_otp) {
       otpSessionStore.delete(trimmedUsername);
@@ -328,7 +388,7 @@ const resetPassword = async (req, res) => {
       return res.status(400).json({ error: "OTP has expired. Please request a new one." });
     }
 
-    if (!entry.verified || storedResult.rows[0].user_otp !== trimmedOtp) {
+    if (!entry.verified || !timingSafeEqualStrings(storedResult.rows[0].user_otp, trimmedOtp)) {
       return res.status(400).json({ error: "OTP verification failed. Please verify OTP first." });
     }
 
@@ -341,11 +401,12 @@ const resetPassword = async (req, res) => {
             passwordchange_flag  = 'Y',
             user_otp_count       = 0,
             user_otp             = NULL
-        WHERE login_id = $2
+        WHERE id = $2
+          AND login_id = $3
           AND COALESCE(active_flag, 'N') = 'Y'
         RETURNING id, login_id
       `,
-      [hashedPassword, trimmedUsername]
+      [hashedPassword, entry.userId || storedResult.rows[0].id, trimmedUsername]
     );
 
     if (updateResult.rows.length === 0) {
