@@ -114,7 +114,9 @@ const authMiddleware = async (req, res, next) => {
         pool.query(
           `UPDATE login_history SET last_activity = NOW() WHERE session_id = $1`,
           [decoded.sessionId]
-        ).catch(err => console.error("Error updating last_activity time:", err));
+        ).catch(err => {
+          //console.error("Error updating last_activity time:", err);
+        });
       }
     }
 

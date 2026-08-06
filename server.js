@@ -1,5 +1,6 @@
 require("dotenv").config();
 const path = require("path");
+const fs = require("fs").promises;
 const express = require("express");
 const cors = require("cors");
 const pool = require("./db/db");
@@ -416,12 +417,22 @@ const ensureOrganisationSchema = async () => {
 
 const startServer = async () => {
   try {
-    await ensureOrganisationSchema();
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+
+    // Create upload directory once during server startup
+    const uploadDir = path.join(
+      process.env.UPLOAD_PATH || "uploads",
+      "Money Receipts"
+    );
+
+    await fs.mkdir(uploadDir, {
+      recursive: true,
     });
+
+    await ensureOrganisationSchema();
+
+    app.listen(PORT);
   } catch (error) {
-    console.error("Failed to initialize organisation schema:", error);
+   // console.error("Failed to initialize organisation schema:", error);
     process.exit(1);
   }
 };
