@@ -451,6 +451,38 @@ const checkApplicantMobileAvailability = async (req, res) => {
   }
 };
 
+const sendApplicantRegistrationOtp = async (req, res) => {
+  try {
+    const trimmedMobile = normalizeMobileNumber(req.body?.mobile);
+    const otp = String(req.body?.otp || "").trim();
+
+    if (!MOBILE_REGEX.test(trimmedMobile)) {
+      return res.status(400).json({ error: "Mobile number must be a valid 10-digit Indian mobile number" });
+    }
+
+    if (!/^\d{6}$/.test(otp)) {
+      return res.status(400).json({ error: "OTP must be a 6-digit number" });
+    }
+
+    const existingApplicant = await findApplicantByMobile(trimmedMobile);
+
+    if (existingApplicant) {
+      return res.status(409).json({ error: "An applicant with this mobile number already exists" });
+    }
+
+    await sendCredentialsSms({
+      mobileNo: trimmedMobile,
+      loginId: trimmedMobile,
+      password: otp,
+    });
+
+    return res.status(200).json({ message: "OTP sent to your mobile number." });
+  } catch (error) {
+    console.error("Applicant registration OTP error:", error);
+    return res.status(500).json({ error: "Could not send OTP. Please try again." });
+  }
+};
+
 const fetchOfficerById = async (userId) => {
   const result = await pool.query(
     `
@@ -1754,6 +1786,7 @@ const checkSessionValid = async (req, res) => {
 module.exports = {
     checkExistingUserByType,
   checkApplicantMobileAvailability,
+  sendApplicantRegistrationOtp,
   createOfficerUser,
   getOfficerDashboardConfig,
   loginOfficer,

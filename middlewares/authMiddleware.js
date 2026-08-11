@@ -4,11 +4,12 @@ const pool = require("../db/db");
 const PUBLIC_ROUTES = [
   { path: /^\/api\/auth\/login$/, methods: ["POST"] },
   { path: /^\/api\/auth\/applicant\/check-mobile$/, methods: ["GET", "POST"] },
+  { path: /^\/api\/auth\/applicant\/send-otp$/, methods: ["POST"] },
   { path: /^\/api\/auth\/applicant\/register$/, methods: ["POST"] },
   { path: /^\/api\/applicant-auth\/check-mobile$/, methods: ["GET", "POST"] },
   { path: /^\/api\/applicant-auth\/login$/, methods: ["POST"] },
   { path: /^\/api\/applicant-auth\/login-password$/, methods: ["POST"] },
-    { path: /^\/api\/applicant-auth\/send-otp$/, methods: ["POST"] }, // ← ADD THIS
+  { path: /^\/api\/applicant-auth\/send-otp$/, methods: ["POST"] }, 
   { path: /^\/api\/location\/.*$/, methods: ["GET"] },
   { path: /^\/api\/public-dashboard\/.*$/, methods: ["GET"] },
   { path: /^\/api\/officer\/forgot-password\/.*$/, methods: ["POST"] },

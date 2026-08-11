@@ -15,7 +15,6 @@ const {
 
 // ── Multer setup ─────────────────────────────────────────────────────────────
 const uploadDir = path.join(process.env.UPLOAD_PATH || "uploads", "Money Receipts");
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadDir),
