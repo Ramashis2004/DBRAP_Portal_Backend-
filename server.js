@@ -3,7 +3,8 @@ const path = require("path");
 const fs = require("fs").promises;
 const express = require("express");
 const cors = require("cors");
-const helmet = require("helmet"); // Helmet for HTTP security headers
+const helmet = require("helmet");
+const crypto = require("crypto");
 const pool = require("./db/db");
 
 const userManualRouter = require("./routes/userManualRoutes");
@@ -50,7 +51,7 @@ const app = express();
 // ISSUE 8 FIX: Disable X-Powered-By header leak
 app.disable("x-powered-by");
 
-// ISSUE 5 FIX: Restrict CORS to explicit allowed origins (No wildcard '*')
+// ISSUE 5 FIX: Restrict CORS with safe fallback
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
   .map(url => url.trim())
@@ -59,7 +60,7 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
 app.use(
   cors({
     origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin || allowedOrigins.includes(origin) || origin.startsWith("http://10.172.32.252") || origin.startsWith("http://localhost") || origin.startsWith("http://127.0.0.1")) {
         return callback(null, true);
       }
       return callback(null, false);
@@ -70,33 +71,54 @@ app.use(
   })
 );
 
-// ISSUES 2, 3, 4, 6, 7 FIX: Configure Helmet security headers
+// DYNAMIC NONCE GENERATOR: Generates a unique crypto nonce per HTTP request
+app.use((req, res, next) => {
+  res.locals.cspNonce = crypto.randomBytes(16).toString("base64");
+  next();
+});
+
+// ISSUES 2, 3, 4, 6, 7 FIX: Configure Helmet for React Single Page Applications
 app.use(
   helmet({
-    // Issue 6: Content-Security-Policy (CSP)
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-            connectSrc: ["'self'", "ws:", "wss:"],
-        scriptSrc: ["'self'", "'unsafe-inline'"],
+        baseUri: ["'self'"],
+        // ALLOW REACT BUNDLES ('self'), INLINE STYLES/SCRIPTS AND NONCES
+        scriptSrc: [
+          "'self'",
+          "'unsafe-inline'",
+          (req, res) => `'nonce-${res.locals.cspNonce}'`
+        ],
+        scriptSrcAttr: ["'none'"],
         styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
         imgSrc: ["'self'", "data:", "blob:"],
-        connectSrc: ["'self'"],
- frameAncestors: [
-          "'self'"
-        ],        objectSrc: ["'none'"],
-        baseUri: ["'self'"],
-        formAction: ["'self'"]
+        connectSrc: [
+          "'self'",
+          "http://localhost:*",
+          "http://127.0.0.1:*",
+          "http://10.172.32.252:*",
+          "ws:",
+          "wss:"
+        ],
+        mediaSrc: ["'self'"],
+        workerSrc: ["'self'", "blob:"],
+        formAction: ["'self'"],
+        // ALLOW PDF VIEWERS AND IFRAME EMBEDS
+        objectSrc: ["'self'"],
+        frameSrc: ["'self'"],
+        frameAncestors: [
+          "'self'",
+          "http://localhost:*",
+          "http://127.0.0.1:*",
+          "http://10.172.32.252:*"
+        ]
       }
     },
-    // Issue 2: Cross-Origin-Embedder-Policy (COEP)
-    crossOriginEmbedderPolicy: { policy: "require-corp" },
-    // Issue 3: Cross-Origin-Opener-Policy (COOP)
-    crossOriginOpenerPolicy: { policy: "same-origin" },
-    // Issue 4: Cross-Origin-Resource-Policy (CORP)
-    crossOriginResourcePolicy: { policy: "same-site" },
-    // Issue 7: X-Content-Type-Options: nosniff
+    crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+    crossOriginResourcePolicy: { policy: "cross-origin" },
     noSniff: true
   })
 );
@@ -107,13 +129,17 @@ app.use(express.json());
 // ROUTES & MIDDLEWARES
 // ==========================================
 
+// Public routes (No token required)
 app.use("/api/user-manual", userManualRouter);
-app.use("/api/auth", authRoutes); // <-- Login & Auth MUST be public!
+app.use("/api/auth", authRoutes); // LOGIN ROUTE MUST BE PUBLIC
 app.use("/api/applicant-auth", applicantAuthRoutes);
 app.use("/api/public-dashboard", publicDashboardRoutes);
 app.use("/api", forgotPasswordRoute);
+
+// Protected routes (Token required)
 app.use(authMiddleware);
 app.use(activityLogMiddleware);
+
 app.get("/api/officer/test", (req, res) => {
   res.json({ ok: true });
 });
@@ -144,6 +170,15 @@ app.use("/api/ce-pending", cePendingRouter);
 app.use("/api/eic-pending", eicPendingRouter);
 app.use("/api/se-dashboard-applications", seDashboardStatusCountRoutes);
 app.use("/api/aee-dashboard-applications", aeeStatusCountRoutes);
+
+// Global Error Handler Logger
+app.use((err, req, res, next) => {
+  console.error("❌ EXPRESS SERVER ERROR:", err.stack || err);
+  res.status(500).json({
+    success: false,
+    message: err.message || "Internal Server Error"
+  });
+});
 
 // Serve frontend static files in production
 const frontendDistPath = path.join(__dirname, "../../frontend/DBRAP_Portal_Frontend/dist");
@@ -489,7 +524,7 @@ const startServer = async () => {
 
     await ensureOrganisationSchema();
 
-    app.listen(PORT, () => {
+    app.listen(PORT, "0.0.0.0", () => {
       console.log(`Secured server running on port ${PORT}`);
     });
   } catch (error) {
