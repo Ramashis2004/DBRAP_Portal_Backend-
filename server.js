@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs").promises;
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet"); // Helmet for HTTP security headers
 const pool = require("./db/db");
 
 const userManualRouter = require("./routes/userManualRoutes");
@@ -42,11 +43,75 @@ const activityLogMiddleware = require("./middlewares/activityLogMiddleware");
    
 const app = express();
 
-app.use(cors());
+// ==========================================
+// SECURITY FIXES FOR HCL APPSCAN FINDINGS
+// ==========================================
+
+// ISSUE 8 FIX: Disable X-Powered-By header leak
+app.disable("x-powered-by");
+
+// ISSUE 5 FIX: Restrict CORS to explicit allowed origins (No wildcard '*')
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map(url => url.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(null, false);
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"]
+  })
+);
+
+// ISSUES 2, 3, 4, 6, 7 FIX: Configure Helmet security headers
+app.use(
+  helmet({
+    // Issue 6: Content-Security-Policy (CSP)
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+            connectSrc: ["'self'", "ws:", "wss:"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
+        imgSrc: ["'self'", "data:", "blob:"],
+        connectSrc: ["'self'"],
+ frameAncestors: [
+          "'self'"
+        ],        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"]
+      }
+    },
+    // Issue 2: Cross-Origin-Embedder-Policy (COEP)
+    crossOriginEmbedderPolicy: { policy: "require-corp" },
+    // Issue 3: Cross-Origin-Opener-Policy (COOP)
+    crossOriginOpenerPolicy: { policy: "same-origin" },
+    // Issue 4: Cross-Origin-Resource-Policy (CORP)
+    crossOriginResourcePolicy: { policy: "same-site" },
+    // Issue 7: X-Content-Type-Options: nosniff
+    noSniff: true
+  })
+);
+
 app.use(express.json());
 
-app.use("/api/user-manual", userManualRouter);
+// ==========================================
+// ROUTES & MIDDLEWARES
+// ==========================================
 
+app.use("/api/user-manual", userManualRouter);
+app.use("/api/auth", authRoutes); // <-- Login & Auth MUST be public!
+app.use("/api/applicant-auth", applicantAuthRoutes);
+app.use("/api/public-dashboard", publicDashboardRoutes);
+app.use("/api", forgotPasswordRoute);
 app.use(authMiddleware);
 app.use(activityLogMiddleware);
 app.get("/api/officer/test", (req, res) => {
@@ -56,7 +121,6 @@ app.use("/api/applicant-payment", applicantPaymentRoutes);
 app.use("/api/pending-applications", pendingApplicationsRoutes);
 app.use("/api/password", passwordRoutes);
 
-app.use("/api/auth", authRoutes);
 app.use("/api/organisation", organisationRoutes);
 app.use("/api/application-received", applicationReceivedRoutes);
 app.use("/api/ce-application-received", ceApplicationReceivedRoutes);
@@ -64,10 +128,8 @@ app.use("/api/eic-application-received", eicApplicationReceivedRoutes);
 app.use("/api/se-payment-details", sePaymentDetailsRoutes);
 app.use("/api/je-payment-details", jePaymentDetailsRoutes);
 app.use("/api/location", locationRoutes);
-app.use("/api/applicant-auth", applicantAuthRoutes);
 app.use("/api/applicant-application", applicantApplicationRoutes);
 app.use("/api/history", historyRoutes);
-app.use("/api", forgotPasswordRoute);
 app.use("/api/payment-verification", paymentVerificationRoutes);
 app.use("/api/officer", updateConnRoutes);
 app.use("/api/se-dashboard-applications", seDashboardApplicationsRoutes);
@@ -78,8 +140,7 @@ app.use("/api/eic-dashboard-applications", eicDashboardApplicationsRoutes);
 app.use("/api/eic-dashboard", eicDashboardOverdueRoutes);
 app.use("/api/sla-config", slaConfigRoutes);
 app.use("/api/sla-tracking", slaTrackingRoutes);
-app.use("/api/public-dashboard", publicDashboardRoutes);
-app.use("/api/ce-pending",  cePendingRouter);
+app.use("/api/ce-pending", cePendingRouter);
 app.use("/api/eic-pending", eicPendingRouter);
 app.use("/api/se-dashboard-applications", seDashboardStatusCountRoutes);
 app.use("/api/aee-dashboard-applications", aeeStatusCountRoutes);
@@ -96,7 +157,7 @@ app.get(/.*/, (req, res, next) => {
   res.sendFile(path.join(frontendDistPath, "index.html"));
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 8080;
 
 const ensureOrganisationSchema = async () => {
   const enumExistsResult = await pool.query(`
@@ -417,8 +478,6 @@ const ensureOrganisationSchema = async () => {
 
 const startServer = async () => {
   try {
-
-    // Create upload directory once during server startup
     const uploadDir = path.join(
       process.env.UPLOAD_PATH || "uploads",
       "Money Receipts"
@@ -430,9 +489,11 @@ const startServer = async () => {
 
     await ensureOrganisationSchema();
 
-    app.listen(PORT);
+    app.listen(PORT, () => {
+      console.log(`Secured server running on port ${PORT}`);
+    });
   } catch (error) {
-   // console.error("Failed to initialize organisation schema:", error);
+    console.error("Failed to initialize organisation schema:", error);
     process.exit(1);
   }
 };
