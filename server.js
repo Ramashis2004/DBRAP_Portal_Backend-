@@ -81,6 +81,7 @@ app.use((req, res, next) => {
 app.use(
   helmet({
     contentSecurityPolicy: {
+      useDefaults: false, // <-- stop Helmet from merging in its own defaults
       directives: {
         defaultSrc: ["'self'"],
         baseUri: ["'self'"],
