@@ -140,6 +140,11 @@ const registerApplicantOrganisation = async (req, res) => {
       habitation,
       type_of_connection,
       water_requirement,
+      oo_user_code,
+      oo_request_id,
+      oo_service_id,
+      oo_subservice_id,
+      registration_source,
     } = req.body;
 
     if (!applicant_user_id) {
@@ -210,7 +215,8 @@ const registerApplicantOrganisation = async (req, res) => {
           type_of_connection, water_requirement,
           application_status,
           property_proof, registration_proof, ownership_proof,
-          owner_indemnity_bond, identity_proof
+          owner_indemnity_bond, identity_proof,
+          oo_user_code, oo_request_id, oo_service_id, oo_subservice_id, registration_source
         )
         VALUES (
           $1,  $2,
@@ -220,7 +226,8 @@ const registerApplicantOrganisation = async (req, res) => {
           $13, $14, $15, $16,
           $17, $18,
           $19,
-          $20, $21, $22, $23, $24
+          $20, $21, $22, $23, $24,
+          $25, $26, $27, $28, $29
         )
         RETURNING *
       `,
@@ -243,12 +250,17 @@ const registerApplicantOrganisation = async (req, res) => {
         applicant.mobile_no,
         type_of_connection,
         water_requirement,
-        APPLICATION_STATUS.APPLICATION_SUBMITTED, // ← status set here
+        APPLICATION_STATUS.APPLICATION_SUBMITTED,
         property_proof,
         registration_proof,
         ownership_proof,
         owner_indemnity_bond,
         identity_proof,
+        oo_user_code || null,
+        oo_request_id || null,
+        oo_service_id || null,
+        oo_subservice_id || null,
+        registration_source || "DIRECT",
       ]
     );
 

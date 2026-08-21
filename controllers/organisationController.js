@@ -4,6 +4,7 @@ const pool = require("../db/db");
 const { APPLICATION_STATUS } = require("../constraints/application_status_enum");
 const { saveApplicationHistory } = require("./historyController");
 const { handleSlaOnStatusChange , handleSiteVisitUploadSla  } = require("./slaTrackingController");
+const { pushApplicationStatusToOdishaOne } = require("./odishaOneController");
 
 const APPLICATION_STATUS_VALUES = Object.values(APPLICATION_STATUS);
 const isValidApplicationStatus = (value) => APPLICATION_STATUS_VALUES.includes(value);
@@ -261,6 +262,12 @@ await saveApplicationHistory(
       actorUserId: req.body.userId || null,
       assignedTo: req.body?.assignedTo ?? req.body?.assigned_to ?? null,
     });
+
+    // Trigger API 9 Host-to-Host status update to Odisha One
+    pushApplicationStatusToOdishaOne(applicationId, applicationStatus, req.body.remarks || "").catch((err) => {
+      console.error("API 9 status push background error:", err);
+    });
+
     if (result.rowCount === 0) {
       return res.status(404).json({ error: "Organisation not found" });
     }

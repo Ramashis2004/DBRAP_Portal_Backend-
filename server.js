@@ -36,6 +36,7 @@ const eicDashboardOverdueRoutes = require("./routes/eicDashboardOverdueRoutes");
 const slaConfigRoutes = require("./routes/slaConfigRoutes");
 const slaTrackingRoutes = require("./routes/slaTrackingRoutes");
 const publicDashboardRoutes = require("./routes/publicDashboardRoutes");
+const odishaOneRoutes = require("./routes/odishaOneRoutes");
 const { cePendingRouter, eicPendingRouter } = require("./routes/pendingPieChartRoutes");
 const seDashboardStatusCountRoutes = require("./routes/seDashboardStatusCountRoutes");
 const aeeStatusCountRoutes = require("./routes/aeeStatusCountRoutes");
@@ -125,6 +126,7 @@ app.use(
 );
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // ==========================================
 // ROUTES & MIDDLEWARES
@@ -135,6 +137,7 @@ app.use("/api/user-manual", userManualRouter);
 app.use("/api/auth", authRoutes); // LOGIN ROUTE MUST BE PUBLIC
 app.use("/api/applicant-auth", applicantAuthRoutes);
 app.use("/api/public-dashboard", publicDashboardRoutes);
+app.use("/api/odisha-one", odishaOneRoutes);
 app.use("/api", forgotPasswordRoute);
 
 // Protected routes (Token required)
@@ -509,6 +512,31 @@ const ensureOrganisationSchema = async () => {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_login_activity_logs_login_history_id
     ON public.login_activity_logs USING btree (login_history_id ASC NULLS LAST)
+  `);
+
+  // ── Odisha One Integration Schema Updates ──
+  await pool.query(`ALTER TABLE user_master ADD COLUMN IF NOT EXISTS oo_user_code TEXT`);
+  await pool.query(`ALTER TABLE user_master ADD COLUMN IF NOT EXISTS registration_source TEXT DEFAULT 'DIRECT'`);
+
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS oo_user_code TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS oo_request_id TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS oo_service_id TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS oo_subservice_id TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS registration_source TEXT DEFAULT 'DIRECT'`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS odisha_one_audit_logs (
+      id BIGSERIAL PRIMARY KEY,
+      request_id TEXT,
+      api_name TEXT,
+      service_id TEXT,
+      sub_service_id TEXT,
+      oo_user_code TEXT,
+      application_id TEXT,
+      status_code TEXT,
+      status_message TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
   `);
 };
 

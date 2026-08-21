@@ -10,6 +10,7 @@ const PUBLIC_ROUTES = [
   { path: /^\/api\/applicant-auth\/login$/, methods: ["POST"] },
   { path: /^\/api\/applicant-auth\/login-password$/, methods: ["POST"] },
   { path: /^\/api\/applicant-auth\/send-otp$/, methods: ["POST"] }, 
+  { path: /^\/api\/odisha-one\/.*$/, methods: ["GET", "POST"] },
   { path: /^\/api\/location\/.*$/, methods: ["GET"] },
   { path: /^\/api\/public-dashboard\/.*$/, methods: ["GET"] },
   { path: /^\/api\/officer\/forgot-password\/.*$/, methods: ["POST"] },
