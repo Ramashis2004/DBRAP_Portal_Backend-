@@ -37,6 +37,7 @@ const slaConfigRoutes = require("./routes/slaConfigRoutes");
 const slaTrackingRoutes = require("./routes/slaTrackingRoutes");
 const publicDashboardRoutes = require("./routes/publicDashboardRoutes");
 const odishaOneRoutes = require("./routes/odishaOneRoutes");
+const tpiRoutes = require("./routes/tpiRoutes");
 const { cePendingRouter, eicPendingRouter } = require("./routes/pendingPieChartRoutes");
 const seDashboardStatusCountRoutes = require("./routes/seDashboardStatusCountRoutes");
 const aeeStatusCountRoutes = require("./routes/aeeStatusCountRoutes");
@@ -138,6 +139,7 @@ app.use("/api/auth", authRoutes); // LOGIN ROUTE MUST BE PUBLIC
 app.use("/api/applicant-auth", applicantAuthRoutes);
 app.use("/api/public-dashboard", publicDashboardRoutes);
 app.use("/api/odisha-one", odishaOneRoutes);
+app.use("/api/v1/tpi", tpiRoutes);
 app.use("/api", forgotPasswordRoute);
 
 // Protected routes (Token required)
