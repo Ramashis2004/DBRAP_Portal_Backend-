@@ -138,7 +138,7 @@ app.use("/api/user-manual", userManualRouter);
 app.use("/api/auth", authRoutes); // LOGIN ROUTE MUST BE PUBLIC
 app.use("/api/applicant-auth", applicantAuthRoutes);
 app.use("/api/public-dashboard", publicDashboardRoutes);
-app.use("/api/odisha-one", odishaOneRoutes);
+app.use("/api/odisha-one", tpiRoutes);
 app.use("/api/v1/tpi", tpiRoutes);
 app.use("/api", forgotPasswordRoute);
 

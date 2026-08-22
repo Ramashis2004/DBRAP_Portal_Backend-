@@ -20,8 +20,18 @@ const initAuditLogTable = async () => {
         application_id VARCHAR(100),
         status_code VARCHAR(20),
         status_message TEXT,
+        ip_address VARCHAR(50),
+        user_agent TEXT,
+        raw_payload TEXT,
+        decrypted_data JSONB,
+        execution_time_ms INTEGER,
         created_at TIMESTAMP DEFAULT NOW()
       );
+      ALTER TABLE odisha_one_audit_logs ADD COLUMN IF NOT EXISTS ip_address VARCHAR(50);
+      ALTER TABLE odisha_one_audit_logs ADD COLUMN IF NOT EXISTS user_agent TEXT;
+      ALTER TABLE odisha_one_audit_logs ADD COLUMN IF NOT EXISTS raw_payload TEXT;
+      ALTER TABLE odisha_one_audit_logs ADD COLUMN IF NOT EXISTS decrypted_data JSONB;
+      ALTER TABLE odisha_one_audit_logs ADD COLUMN IF NOT EXISTS execution_time_ms INTEGER;
     `);
   } catch (err) {
     console.warn("[ODISHA-ONE] Audit table init note:", err.message);
@@ -43,13 +53,20 @@ const logAudit = async ({
   applicationId,
   statusCode,
   statusMessage,
+  ipAddress,
+  userAgent,
+  rawPayload,
+  decryptedData,
+  executionTimeMs,
 }) => {
+  const timestamp = new Date().toISOString();
+  console.log(`[ODISHA-ONE AUDIT] [${timestamp}] API: ${apiName || "N/A"} | REQ_ID: ${requestId || "N/A"} | STATUS: ${statusCode || "200"} | MSG: ${statusMessage || ""} | IP: ${ipAddress || "N/A"}`);
   try {
     await pool.query(
       `
         INSERT INTO odisha_one_audit_logs
-        (request_id, api_name, service_id, sub_service_id, oo_user_code, application_id, status_code, status_message, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+        (request_id, api_name, service_id, sub_service_id, oo_user_code, application_id, status_code, status_message, ip_address, user_agent, raw_payload, decrypted_data, execution_time_ms, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
       `,
       [
         requestId || null,
@@ -60,10 +77,15 @@ const logAudit = async ({
         applicationId || null,
         String(statusCode || "200"),
         statusMessage || null,
+        ipAddress || null,
+        userAgent || null,
+        rawPayload || null,
+        decryptedData ? JSON.stringify(decryptedData) : null,
+        executionTimeMs || null,
       ]
     );
   } catch (err) {
-    console.log(`[ODISHA-ONE AUDIT LOG] API: ${apiName} | REQUESTID: ${requestId || "N/A"} | STATUS: ${statusCode} | MSG: ${statusMessage}`);
+    console.warn("[ODISHA-ONE AUDIT DB NOTE]", err.message);
   }
 };
 

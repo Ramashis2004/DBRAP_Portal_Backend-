@@ -36,14 +36,33 @@ const getConfig = () => ({
   checksumKey: process.env.ODISHA_ONE_CHECKSUM_KEY || "JWLP9BSUXX7BSCO79LRMHVZQC9MFS2",
 });
 
-// Helper to log audit entries to database
-const logAudit = async ({ requestId, apiName, serviceId, subServiceId, ooUserCode, applicationId, statusCode, statusMessage }) => {
+// Helper to log audit entries to database and console in real-time
+const logAudit = async ({
+  requestId,
+  apiName,
+  serviceId,
+  subServiceId,
+  ooUserCode,
+  applicationId,
+  statusCode,
+  statusMessage,
+  ipAddress,
+  userAgent,
+  rawPayload,
+  decryptedData,
+  executionTimeMs,
+}) => {
+  const timestamp = new Date().toISOString();
+  console.log(
+    `[ODISHA-ONE AUDIT] [${timestamp}] API: ${apiName || "N/A"} | REQ_ID: ${requestId || "N/A"} | STATUS: ${statusCode || "200"} | MSG: ${statusMessage || ""} | IP: ${ipAddress || "N/A"}`
+  );
+
   try {
     await pool.query(
       `
         INSERT INTO odisha_one_audit_logs
-        (request_id, api_name, service_id, sub_service_id, oo_user_code, application_id, status_code, status_message, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+        (request_id, api_name, service_id, sub_service_id, oo_user_code, application_id, status_code, status_message, ip_address, user_agent, raw_payload, decrypted_data, execution_time_ms, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
       `,
       [
         requestId || null,
@@ -52,8 +71,13 @@ const logAudit = async ({ requestId, apiName, serviceId, subServiceId, ooUserCod
         subServiceId || null,
         ooUserCode || null,
         applicationId || null,
-        String(statusCode || ""),
+        String(statusCode || "200"),
         statusMessage || null,
+        ipAddress || null,
+        userAgent || null,
+        rawPayload || null,
+        decryptedData ? JSON.stringify(decryptedData) : null,
+        executionTimeMs || null,
       ]
     );
   } catch (err) {
@@ -125,10 +149,22 @@ const generateApplicantUserId = async (client) => {
 // API 1 LANDING ENDPOINT — POST /api/odisha-one/landing
 // ─────────────────────────────────────────────────────────────────────────────
 const handleLanding = async (req, res) => {
+  const startTime = Date.now();
   const config = getConfig();
   const encData = req.body?.encData || req.query?.encData;
+  const ipAddress = req.headers["x-forwarded-for"] || req.socket.remoteAddress || null;
+  const userAgent = req.headers["user-agent"] || null;
 
   if (!encData) {
+    await logAudit({
+      apiName: "API1_LANDING",
+      statusCode: "400",
+      statusMessage: "Missing encData parameter in request",
+      ipAddress,
+      userAgent,
+      executionTimeMs: Date.now() - startTime,
+    });
+
     return renderErrorView(res, {
       code: "400",
       title: "Bad Request",
@@ -139,6 +175,16 @@ const handleLanding = async (req, res) => {
   // 1. Decrypt encData
   const decryptedJson = decrypt(config.accessKey, encData);
   if (!decryptedJson) {
+    await logAudit({
+      apiName: "API1_LANDING",
+      statusCode: "307",
+      statusMessage: "Unable to decrypt encData payload with accessKey",
+      ipAddress,
+      userAgent,
+      rawPayload: String(encData).substring(0, 200),
+      executionTimeMs: Date.now() - startTime,
+    });
+
     return renderErrorView(res, {
       code: "307",
       title: "Invalid Encrypted Data",
@@ -150,6 +196,16 @@ const handleLanding = async (req, res) => {
   try {
     data = JSON.parse(decryptedJson);
   } catch (err) {
+    await logAudit({
+      apiName: "API1_LANDING",
+      statusCode: "311",
+      statusMessage: "Decrypted payload is not valid JSON",
+      ipAddress,
+      userAgent,
+      rawPayload: String(encData).substring(0, 200),
+      executionTimeMs: Date.now() - startTime,
+    });
+
     return renderErrorView(res, {
       code: "311",
       title: "Invalid JSON Structure",
@@ -161,6 +217,20 @@ const handleLanding = async (req, res) => {
   const cancelUrl = data.TPIURLS?.CANCELURL || null;
 
   if (!requestId) {
+    await logAudit({
+      requestId: null,
+      apiName: "API1_LANDING",
+      serviceId: data.SERVICEID,
+      subServiceId: data.SUBSERVICEID,
+      ooUserCode: data.OOUSERCODE,
+      statusCode: "304",
+      statusMessage: "REQUESTID missing in decrypted payload",
+      ipAddress,
+      userAgent,
+      decryptedData: data,
+      executionTimeMs: Date.now() - startTime,
+    });
+
     return renderErrorView(res, {
       code: "304",
       title: "Missing Request ID",
@@ -180,7 +250,12 @@ const handleLanding = async (req, res) => {
       subServiceId: data.SUBSERVICEID,
       ooUserCode: data.OOUSERCODE,
       statusCode: "309",
-      statusMessage: "Checksum verification failed",
+      statusMessage: "Security checksum mismatch",
+      ipAddress,
+      userAgent,
+      rawPayload: String(encData).substring(0, 200),
+      decryptedData: data,
+      executionTimeMs: Date.now() - startTime,
     });
 
     return renderErrorView(res, {
@@ -241,6 +316,9 @@ const handleLanding = async (req, res) => {
         ooUserCode: data.OOUSERCODE,
         statusCode: "403",
         statusMessage: "ORIGINEDFROMOO verification failed",
+        ipAddress,
+        userAgent,
+        executionTimeMs: Date.now() - startTime,
       });
 
       return renderErrorView(res, {
@@ -259,6 +337,9 @@ const handleLanding = async (req, res) => {
       ooUserCode: data.OOUSERCODE,
       statusCode: "200",
       statusMessage: "ORIGINEDFROMOO verified successfully",
+      ipAddress,
+      userAgent,
+      executionTimeMs: Date.now() - startTime,
     });
 
   } catch (verifyErr) {
@@ -288,6 +369,7 @@ const handleLanding = async (req, res) => {
 
   const client = await pool.connect();
   let applicantUser;
+  let isExistingUser = false;
 
   try {
     await client.query("BEGIN");
@@ -309,6 +391,7 @@ const handleLanding = async (req, res) => {
 
     if (existingUserRes.rows.length > 0) {
       applicantUser = existingUserRes.rows[0];
+      isExistingUser = true;
       // Update oo_user_code or organisation_name if provided from Odisha One
       await client.query(
         `
@@ -363,6 +446,20 @@ const handleLanding = async (req, res) => {
   } catch (dbErr) {
     await client.query("ROLLBACK");
     console.error("Odisha One user registration error:", dbErr);
+
+    await logAudit({
+      requestId,
+      apiName: "API1_LANDING",
+      serviceId: data.SERVICEID,
+      subServiceId: data.SUBSERVICEID,
+      ooUserCode: data.OOUSERCODE,
+      statusCode: "500",
+      statusMessage: `User onboarding DB error: ${dbErr.message}`,
+      ipAddress,
+      userAgent,
+      executionTimeMs: Date.now() - startTime,
+    });
+
     return renderErrorView(res, {
       code: "500",
       title: "User Onboarding Error",
@@ -375,8 +472,6 @@ const handleLanding = async (req, res) => {
 
   // 5. Establish Session & JWT Token
   const sessionId = crypto.randomUUID();
-  const ipAddress = req.headers["x-forwarded-for"] || req.socket.remoteAddress || null;
-  const userAgent = req.headers["user-agent"] || null;
 
   await saveLoginHistory(
     applicantUser.id,
@@ -429,7 +524,22 @@ const handleLanding = async (req, res) => {
     odishaOneHandoffStore.delete(handoffToken);
   }, 15 * 60 * 1000);
 
-  // 7. Redirect Browser to Frontend Registration Page
+  // 7. Audit Log API 1 Final Success & Redirect
+  await logAudit({
+    requestId,
+    apiName: "API1_LANDING",
+    serviceId: data.SERVICEID,
+    subServiceId: data.SUBSERVICEID,
+    ooUserCode: data.OOUSERCODE,
+    statusCode: "200",
+    statusMessage: `API 1 success: User session established (Existing User: ${isExistingUser ? "YES" : "NO"})`,
+    ipAddress,
+    userAgent,
+    decryptedData: data,
+    executionTimeMs: Date.now() - startTime,
+  });
+
+  // 8. Redirect Browser to Frontend Page
   const redirectUrl = `/applicant-organisation-registration?oo_session=${handoffToken}`;
   return res.redirect(redirectUrl);
 };
