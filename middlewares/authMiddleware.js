@@ -75,17 +75,16 @@ const authMiddleware = async (req, res, next) => {
         [decoded.sessionId]
       );
 
-      if (sessionCheck.rows.length === 0) {
+      if (sessionCheck.rows.length > 0) {
+        const session = sessionCheck.rows[0];
+        if (session.is_active !== true) {
+          return res.status(401).json({ error: "Session has been terminated from another device or browser." });
+        }
+        // Attach login history ID to request object for logging
+        req.loginHistoryId = session.id;
+      } else if (!decoded.isOdishaOne) {
         return res.status(401).json({ error: "Session not found." });
       }
-
-      const session = sessionCheck.rows[0];
-      if (session.is_active !== true) {
-        return res.status(401).json({ error: "Session has been terminated from another device or browser." });
-      }
-
-      // Attach login history ID to request object for logging
-      req.loginHistoryId = session.id;
 
       // Check for inactivity timeout
       if (session.last_activity) {

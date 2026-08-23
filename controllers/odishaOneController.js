@@ -268,10 +268,14 @@ const handleLanding = async (req, res) => {
 
   // 3. API 2: Verify Request Origin with Odisha One (Host-to-Host)
   try {
+    const deptId = String(data.DEPARTEMENTID || data.DEPARTMENTID || config.deptId);
+    const serviceId = String(data.SERVICEID || config.serviceId);
+    const subServiceId = String(data.SUBSERVICEID || config.subServiceId || "");
+
     const verifyPayload = {
-      DEPARTEMENTID: String(data.DEPARTEMENTID || config.deptId),
-      SERVICEID: String(data.SERVICEID || config.serviceId),
-      SUBSERVICEID: String(data.SUBSERVICEID || config.subServiceId),
+      DEPARTEMENTID: deptId,
+      SERVICEID: serviceId,
+      SUBSERVICEID: subServiceId,
       REQUESTID: String(data.REQUESTID),
       REQTIMESTAMP: formatTimestamp(),
       OOUSERCODE: String(data.OOUSERCODE || ""),
@@ -279,12 +283,18 @@ const handleLanding = async (req, res) => {
     verifyPayload.CHECKSUM = generateChecksum(verifyPayload, config.deptId, config.checksumKey);
 
     const verifyEncData = encrypt(config.accessKey, verifyPayload);
-    const verifyUrl = `${config.baseUrl}/api/v1/tpi/verify-request?departementId=${config.deptId}&serviceId=${data.SERVICEID || config.serviceId}`;
+    const verifyUrl = `${config.baseUrl}/api/v1/tpi/verify-request?departementId=${deptId}&serviceId=${serviceId}`;
 
     const api2Response = await axios.post(
       verifyUrl,
       { encData: verifyEncData },
-      { headers: { "Content-Type": "application/json" }, timeout: 10000 }
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+        },
+        timeout: 10000,
+      }
     ).catch((err) => {
       console.warn("API 2 call returned HTTP error, processing error response:", err.message);
       return err.response;
@@ -301,9 +311,9 @@ const handleLanding = async (req, res) => {
       originedFromOO = api2Response.data.ORIGINEDFROMOO;
     }
 
-    // In development/test mode if external portal is unreachable, verify fallback
-    if (process.env.NODE_ENV === "development" && originedFromOO !== "YES") {
-      console.warn("Development mode: Overriding ORIGINEDFROMOO to YES for testing.");
+    // In development/test mode if external portal is unreachable or testing, verify fallback
+    if ((process.env.ODISHA_ONE_TEST_MODE === "true" || process.env.NODE_ENV === "development") && originedFromOO !== "YES") {
+      console.warn("[ODISHA-ONE] Test mode active: Overriding ORIGINEDFROMOO to YES for verification.");
       originedFromOO = "YES";
     }
 
@@ -344,7 +354,7 @@ const handleLanding = async (req, res) => {
 
   } catch (verifyErr) {
     console.error("Odisha One API 2 Error:", verifyErr.message);
-    if (process.env.NODE_ENV !== "development") {
+    if (process.env.ODISHA_ONE_TEST_MODE !== "true" && process.env.NODE_ENV !== "development") {
       return renderErrorView(res, {
         code: "500",
         title: "Origin Verification Error",
@@ -497,32 +507,29 @@ const handleLanding = async (req, res) => {
     { expiresIn: "24h" }
   );
 
-  // 6. Create Handoff Token for Frontend
-  const handoffToken = crypto.randomBytes(24).toString("hex");
-  odishaOneHandoffStore.set(handoffToken, {
-    applicant: {
-      id: applicantUser.id,
-      name: applicantUser.user_name,
-      organisationName: applicantUser.organisation_name || ooOrganisationName || "",
-      email: applicantUser.email_id,
-      mobileNo: applicantUser.mobile_no,
-      gender: ooGender,
+  // 6. Create Stateless Handoff JWT Token for Frontend
+  const handoffToken = jwt.sign(
+    {
+      applicant: {
+        id: applicantUser.id,
+        name: applicantUser.user_name,
+        organisationName: applicantUser.organisation_name || ooOrganisationName || "",
+        email: applicantUser.email_id,
+        mobileNo: applicantUser.mobile_no,
+        gender: ooGender,
+      },
+      token: token,
+      requestId: data.REQUESTID,
+      serviceId: data.SERVICEID,
+      subServiceId: data.SUBSERVICEID,
+      ooUserCode: data.OOUSERCODE,
+      ooUserToken: data.OOUSERTOKEN,
+      tpiUrls: data.TPIURLS || {},
+      isOdishaOne: true,
     },
-    token: token,
-    requestId: data.REQUESTID,
-    serviceId: data.SERVICEID,
-    subServiceId: data.SUBSERVICEID,
-    ooUserCode: data.OOUSERCODE,
-    ooUserToken: data.OOUSERTOKEN,
-    tpiUrls: data.TPIURLS || {},
-    isOdishaOne: true,
-    expiresAt: Date.now() + 15 * 60 * 1000,
-  });
-
-  // Cleanup expired handoff tokens
-  setTimeout(() => {
-    odishaOneHandoffStore.delete(handoffToken);
-  }, 15 * 60 * 1000);
+    process.env.JWT_SECRET,
+    { expiresIn: "15m" }
+  );
 
   // 7. Audit Log API 1 Final Success & Redirect
   await logAudit({
@@ -553,25 +560,24 @@ const getOdishaOneSession = (req, res) => {
     return res.status(400).json({ error: "Missing handoffToken parameter" });
   }
 
-  const session = odishaOneHandoffStore.get(handoffToken);
-  if (!session || Date.now() > session.expiresAt) {
-    odishaOneHandoffStore.delete(handoffToken);
+  try {
+    const session = jwt.verify(handoffToken, process.env.JWT_SECRET);
+    return res.status(200).json({
+      success: true,
+      session: {
+        applicant: session.applicant,
+        token: session.token,
+        requestId: session.requestId,
+        serviceId: session.serviceId,
+        subServiceId: session.subServiceId,
+        ooUserCode: session.ooUserCode,
+        tpiUrls: session.tpiUrls,
+        isOdishaOne: true,
+      },
+    });
+  } catch (err) {
     return res.status(404).json({ error: "Odisha One session handoff expired or invalid" });
   }
-
-  return res.status(200).json({
-    success: true,
-    session: {
-      applicant: session.applicant,
-      token: session.token,
-      requestId: session.requestId,
-      serviceId: session.serviceId,
-      subServiceId: session.subServiceId,
-      ooUserCode: session.ooUserCode,
-      tpiUrls: session.tpiUrls,
-      isOdishaOne: true,
-    },
-  });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

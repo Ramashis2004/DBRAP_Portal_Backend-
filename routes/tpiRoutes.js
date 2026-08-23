@@ -8,6 +8,10 @@ const {
   handleApi4Success,
   handleApi9PushApplicationStatus,
 } = require("../controllers/tpiController");
+const {
+  handleLanding,
+  getOdishaOneSession,
+} = require("../controllers/odishaOneController");
 
 const router = express.Router();
 
@@ -15,9 +19,12 @@ const router = express.Router();
 router.post("/helper/prepare-payload", preparePayload);
 router.post("/helper/decrypt-payload", decryptPayload);
 
-// API 1: Push API to push encrypted data (Landing)
-router.post("/landing", handleApi1Landing);
-router.get("/landing", handleApi1Landing);
+// API 1: Push API to push encrypted data (Landing & Redirect)
+router.post("/landing", handleLanding);
+router.get("/landing", handleLanding);
+
+// Session endpoint for frontend handoff
+router.get("/session", getOdishaOneSession);
 
 // API 2: Verify request originated at Odisha One
 router.post("/verify-request", handleApi2VerifyRequest);

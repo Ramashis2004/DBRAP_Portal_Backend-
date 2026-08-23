@@ -138,7 +138,7 @@ app.use("/api/user-manual", userManualRouter);
 app.use("/api/auth", authRoutes); // LOGIN ROUTE MUST BE PUBLIC
 app.use("/api/applicant-auth", applicantAuthRoutes);
 app.use("/api/public-dashboard", publicDashboardRoutes);
-app.use("/api/odisha-one", tpiRoutes);
+app.use("/api/odisha-one", odishaOneRoutes);
 app.use("/api/v1/tpi", tpiRoutes);
 app.use("/api", forgotPasswordRoute);
 
@@ -283,6 +283,17 @@ const ensureOrganisationSchema = async () => {
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS organisation_application_id_idx
     ON organisation (application_id)
+  `);
+
+  // Ensure user_master table columns exist for Odisha One Integration
+  await pool.query(`
+    ALTER TABLE user_master
+    ADD COLUMN IF NOT EXISTS oo_user_code VARCHAR(100)
+  `);
+
+  await pool.query(`
+    ALTER TABLE user_master
+    ADD COLUMN IF NOT EXISTS registration_source VARCHAR(50)
   `);
 
   await pool.query(`
