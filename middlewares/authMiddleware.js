@@ -10,7 +10,12 @@ const PUBLIC_ROUTES = [
   { path: /^\/api\/applicant-auth\/login$/, methods: ["POST"] },
   { path: /^\/api\/applicant-auth\/login-password$/, methods: ["POST"] },
   { path: /^\/api\/applicant-auth\/send-otp$/, methods: ["POST"] }, 
+
+  // ── ODISHA ONE INTEGRATION WHITELIST ─────────────────────────────────────
   { path: /^\/api\/odisha-one\/.*$/, methods: ["GET", "POST"] },
+  { path: /^\/api\/v1\/tpi\/.*$/, methods: ["GET", "POST"] },
+  // ─────────────────────────────────────────────────────────────────────────
+
   { path: /^\/api\/location\/.*$/, methods: ["GET"] },
   { path: /^\/api\/public-dashboard\/.*$/, methods: ["GET"] },
   { path: /^\/api\/officer\/forgot-password\/.*$/, methods: ["POST"] },
@@ -63,10 +68,10 @@ const authMiddleware = async (req, res, next) => {
   if (!token) {
     return res.status(401).json({ error: "Access denied. No token provided." });
   }
+
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded; // Attach user info to request
-
 
     // Verify if this specific session is still active in the database
     if (decoded && decoded.sessionId) {
@@ -82,43 +87,41 @@ const authMiddleware = async (req, res, next) => {
         }
         // Attach login history ID to request object for logging
         req.loginHistoryId = session.id;
+
+        // Check for inactivity timeout (only when session row exists)
+        if (session.last_activity) {
+          const lastActivity = new Date(session.last_activity);
+          const now = new Date();
+          const inactivityMinutes = (now - lastActivity) / (1000 * 60);
+          const timeoutMinutes = Number(process.env.SESSION_TIMEOUT_MINUTES || 60);
+
+          if (inactivityMinutes > timeoutMinutes) {
+            await pool.query(
+              `UPDATE login_history SET is_active = false, logout_time = NOW() WHERE session_id = $1`,
+              [decoded.sessionId]
+            );
+            await pool.query(
+              `UPDATE user_master SET is_logged = false WHERE id = $1`,
+              [decoded.id]
+            );
+            return res.status(401).json({ error: "Session has expired due to inactivity. Please log in again." });
+          }
+        }
+
+        // Async update of last activity timestamp in login history for active session
+        const isSessionCheck = cleanPath.endsWith("/check-session");
+        if (!isSessionCheck) {
+          pool.query(
+            `UPDATE login_history SET last_activity = NOW() WHERE session_id = $1`,
+            [decoded.sessionId]
+          ).catch(() => {});
+        }
+
       } else if (!decoded.isOdishaOne) {
+        // Non-Odisha-One users without a login_history row are rejected
         return res.status(401).json({ error: "Session not found." });
       }
-
-      // Check for inactivity timeout
-      if (session.last_activity) {
-        const lastActivity = new Date(session.last_activity);
-        const now = new Date();
-        const inactivityMinutes = (now - lastActivity) / (1000 * 60);
-        const timeoutMinutes = Number(process.env.SESSION_TIMEOUT_MINUTES || 60);
-
-        if (inactivityMinutes > timeoutMinutes) {
-          // Deactivate the session in the database due to inactivity
-          await pool.query(
-            `UPDATE login_history SET is_active = false, logout_time = NOW() WHERE session_id = $1`,
-            [decoded.sessionId]
-          );
-          // Also set is_logged = false for the user
-          await pool.query(
-            `UPDATE user_master SET is_logged = false WHERE id = $1`,
-            [decoded.id]
-          );
-          return res.status(401).json({ error: "Session has expired due to inactivity. Please log in again." });
-        }
-      }
-
-      // Async update of last activity timestamp in login history for active session
-      // (excluding background check-session requests to allow inactivity timeout to function correctly)
-      const isSessionCheck = cleanPath.endsWith("/check-session");
-      if (!isSessionCheck) {
-        pool.query(
-          `UPDATE login_history SET last_activity = NOW() WHERE session_id = $1`,
-          [decoded.sessionId]
-        ).catch(err => {
-          //console.error("Error updating last_activity time:", err);
-        });
-      }
+      // Odisha One users without a login_history row → allowed, continue to next()
     }
 
     next();
