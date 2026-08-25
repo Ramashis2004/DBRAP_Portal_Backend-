@@ -2,6 +2,7 @@ const pool = require("../db/db");
 const { APPLICATION_STATUS } = require("../constraints/application_status_enum");
 const { saveApplicationHistory } = require("./historyController"); // ← add this
 const { handleSlaOnStatusChange } = require("./slaTrackingController");
+// Odisha One integration handled by frontend (API-4 browser redirect)
 
 const APPLICANT_ROLE_ID = "7";
 
@@ -144,6 +145,7 @@ const registerApplicantOrganisation = async (req, res) => {
       oo_request_id,
       oo_service_id,
       oo_subservice_id,
+      oo_user_token,
       registration_source,
     } = req.body;
 
@@ -299,6 +301,7 @@ const divisionName = divisionResult.rows[0]?.division_name || "";
       assignedTo: null,
     });
 
+
     return res.status(201).json({
   message: "Organisation registered successfully",
   data: {
@@ -338,6 +341,7 @@ const updateReturnedApplicantOrganisation = async (req, res) => {
       habitation,
       type_of_connection,
       water_requirement,
+      oo_user_token,
     } = req.body;
 
     if (!applicationId) return res.status(400).json({ error: "Application ID is required" });
@@ -468,6 +472,7 @@ const divisionName = divisionResult.rows[0]?.division_name || "";
       actorUserId: applicant.id,
       assignedTo: null,
     });
+
 
    return res.status(200).json({
   message: "Application resubmitted successfully",

@@ -4,6 +4,7 @@ const {
   getOdishaOneSession,
   handleCancel,
   handleSuccessRedirect,
+  getAuditLogs,
 } = require("../controllers/odishaOneController");
 
 const router = express.Router();
@@ -20,5 +21,8 @@ router.post("/cancel", handleCancel);
 
 // API 4: Success API after registration
 router.post("/success", handleSuccessRedirect);
+
+// Audit log inspection API
+router.get("/logs", getAuditLogs);
 
 module.exports = router;

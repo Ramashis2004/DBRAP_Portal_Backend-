@@ -19,15 +19,19 @@ const getConfig = () => ({
   baseUrl: process.env.ODISHA_ONE_BASE_URL,
 });
 
-const formatTimestamp = (date = new Date()) => {
+const formatTimestamp = () => {
+  // Always use IST (UTC+5:30) — Odisha One validates against Indian Standard Time
+  const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const istDate = new Date(now.getTime() + (istOffset + now.getTimezoneOffset() * 60 * 1000));
   const pad = (num, len = 2) => String(num).padStart(len, "0");
-  const yyyy = date.getFullYear();
-  const MM = pad(date.getMonth() + 1);
-  const dd = pad(date.getDate());
-  const HH = pad(date.getHours());
-  const mm = pad(date.getMinutes());
-  const ss = pad(date.getSeconds());
-  const SSS = pad(date.getMilliseconds(), 3);
+  const yyyy = istDate.getFullYear();
+  const MM = pad(istDate.getMonth() + 1);
+  const dd = pad(istDate.getDate());
+  const HH = pad(istDate.getHours());
+  const mm = pad(istDate.getMinutes());
+  const ss = pad(istDate.getSeconds());
+  const SSS = pad(istDate.getMilliseconds(), 3);
   return `${yyyy}${MM}${dd}${HH}${mm}${ss}${SSS}`;
 };
 
@@ -411,6 +415,9 @@ const handleApi4Success = async (req, res) => {
     ooUserToken: body.OOUSERTOKEN || "",
   });
 
+  const rawOOStatus = body.OOSTATUS || "Pending";
+  const ooStatusVal = rawOOStatus === "1" ? "Pending" : String(rawOOStatus);
+
   const successPayload = {
     DEPARTEMENTID: String(deptId),
     SERVICEID: String(serviceId),
@@ -423,7 +430,7 @@ const handleApi4Success = async (req, res) => {
     ADDITIONALPARA2: String(body.ADDITIONALPARA2 || ""),
     OOUSERTOKEN: String(body.OOUSERTOKEN || ""),
     OOUSERCODE: String(body.OOUSERCODE || ""),
-    OOSTATUS: String(body.OOSTATUS || "Pending"),
+    OOSTATUS: ooStatusVal,
   };
 
   successPayload.CHECKSUM = generateChecksum(successPayload, config.deptId, config.checksumKey);

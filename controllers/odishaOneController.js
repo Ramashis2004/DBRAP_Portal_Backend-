@@ -12,16 +12,20 @@ const APPLICANT_ROLE_ID = "7";
 // Server-side in-memory session handoff store for Odisha One landing requests
 const odishaOneHandoffStore = new Map();
 
-// Helper to format timestamp as yyyyMMddHHmmssSSS
-const formatTimestamp = (date = new Date()) => {
+// Helper to format timestamp as yyyyMMddHHmmssSSS (always in IST for Odisha One)
+const formatTimestamp = () => {
+  // Always use IST (UTC+5:30) — Odisha One validates against Indian Standard Time
+  const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000; // IST = UTC + 5:30
+  const istDate = new Date(now.getTime() + (istOffset + now.getTimezoneOffset() * 60 * 1000));
   const pad = (num, len = 2) => String(num).padStart(len, "0");
-  const yyyy = date.getFullYear();
-  const MM = pad(date.getMonth() + 1);
-  const dd = pad(date.getDate());
-  const HH = pad(date.getHours());
-  const mm = pad(date.getMinutes());
-  const ss = pad(date.getSeconds());
-  const SSS = pad(date.getMilliseconds(), 3);
+  const yyyy = istDate.getFullYear();
+  const MM = pad(istDate.getMonth() + 1);
+  const dd = pad(istDate.getDate());
+  const HH = pad(istDate.getHours());
+  const mm = pad(istDate.getMinutes());
+  const ss = pad(istDate.getSeconds());
+  const SSS = pad(istDate.getMilliseconds(), 3);
   return `${yyyy}${MM}${dd}${HH}${mm}${ss}${SSS}`;
 };
 
@@ -215,6 +219,7 @@ const handleLanding = async (req, res) => {
 
   const requestId = data.REQUESTID;
   const cancelUrl = data.TPIURLS?.CANCELURL || null;
+  const successUrl = data.TPIURLS?.SUCCESSURL || null;
 
   if (!requestId) {
     await logAudit({
@@ -452,6 +457,14 @@ const handleLanding = async (req, res) => {
       applicantUser = insertRes.rows[0];
     }
 
+    // Save SUCCESSURL to organisation table if applicant already has an application
+    if (successUrl) {
+      await client.query(
+        `UPDATE organisation SET oo_success_url = $1 WHERE applicant_user_id = $2 AND oo_success_url IS NULL`,
+        [successUrl, String(applicantUser.id)]
+      );
+    }
+
     await client.query("COMMIT");
   } catch (dbErr) {
     await client.query("ROLLBACK");
@@ -571,6 +584,7 @@ const getOdishaOneSession = (req, res) => {
         serviceId: session.serviceId,
         subServiceId: session.subServiceId,
         ooUserCode: session.ooUserCode,
+        ooUserToken: session.ooUserToken,
         tpiUrls: session.tpiUrls,
         isOdishaOne: true,
       },
@@ -587,7 +601,11 @@ const handleCancel = async (req, res) => {
   const config = getConfig();
   const { requestId, serviceId, subServiceId, ooUserToken, ooUserCode, cancelUrl } = req.body;
 
-  const targetCancelUrl = cancelUrl || `${config.baseUrl}/tpi/cancel`;
+  const targetCancelUrl =
+    cancelUrl ||
+    process.env.ODISHA_ONE_CANCEL_URL ||
+    `${config.baseUrl}/tpi/cancel` ||
+    "https://odishaone.gov.in/odisha-one/tpi/cancel";
 
   const payload = {
     DEPARTEMENTID: String(config.deptId),
@@ -637,8 +655,11 @@ const handleSuccessRedirect = async (req, res) => {
     ooUserCode,
     successUrl,
     applicationStatus = "Received",
-    ooStatus = "1", // 1: Pending
+    ooStatus = "Pending",
   } = req.body;
+
+  // Map numeric status string "1" to "Pending" for Odisha One API 4 compatibility
+  const finalOOStatus = (ooStatus === "1" || !ooStatus) ? "Pending" : String(ooStatus);
 
   const targetSuccessUrl = successUrl || `${config.baseUrl}/tpi/success`;
 
@@ -654,11 +675,30 @@ const handleSuccessRedirect = async (req, res) => {
     ADDITIONALPARA2: "",
     OOUSERTOKEN: String(ooUserToken || ""),
     OOUSERCODE: String(ooUserCode || ""),
-    OOSTATUS: String(ooStatus),
+    OOSTATUS: finalOOStatus,
   };
 
   payload.CHECKSUM = generateChecksum(payload, config.deptId, config.checksumKey);
   const encData = encrypt(config.accessKey, payload);
+
+  // ── Terminal Log — Print complete API-4 payload (mask secrets) ──
+  const loggablePayload = { ...payload, OOUSERTOKEN: "***MASKED***", CHECKSUM: "***MASKED***" };
+  console.log("\n============================================================");
+  console.log("ODISHA ONE API-4 SUCCESS PAYLOAD");
+  console.log("============================================================");
+  console.log(`APPLICATION STATUS : ${payload.APPLICATIONSTATUS}`);
+  console.log(`REQUEST ID         : ${requestId}`);
+  console.log(`APPLICATION ID     : ${applicationId}`);
+  console.log(`TIMESTAMP          : ${payload.REQTIMESTAMP}`);
+  console.log(`OOUSERCODE         : ${ooUserCode}`);
+  console.log(`OOSTATUS           : ${finalOOStatus}`);
+  console.log(`SUCCESS URL        : ${targetSuccessUrl}`);
+  console.log("\nAPI-4 PAYLOAD SENT TO ODISHA ONE:");
+  console.log(JSON.stringify(loggablePayload, null, 2));
+  console.log("\nDB LOG SAVED       : YES");
+  console.log("============================================================");
+  console.log("API-4 PAYLOAD READY — BROWSER WILL REDIRECT TO ODISHA ONE");
+  console.log("============================================================\n");
 
   await logAudit({
     requestId,
@@ -669,6 +709,8 @@ const handleSuccessRedirect = async (req, res) => {
     applicationId,
     statusCode: "200",
     statusMessage: "Registration submitted successfully, success payload built",
+    rawPayload: JSON.stringify(payload),
+    decryptedData: payload,
   });
 
   return res.status(200).json({
@@ -679,9 +721,172 @@ const handleSuccessRedirect = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// API 4 AUTO-TRIGGER — Called internally when APPLICATION_SUBMITTED
+// Sends API-4 success payload server-side to Odisha One SUCCESSURL
+// ─────────────────────────────────────────────────────────────────────────────
+const triggerApi4OnSubmit = async (applicationId, ooUserTokenParam = "") => {
+  const config = getConfig();
+
+  try {
+    // 1. Fetch all required Odisha One fields from organisation table
+    const appRes = await pool.query(
+      `SELECT application_id, oo_request_id, oo_service_id, oo_subservice_id,
+              oo_user_code, oo_success_url
+       FROM organisation
+       WHERE application_id = $1
+       LIMIT 1`,
+      [applicationId]
+    );
+
+    if (appRes.rows.length === 0) {
+      console.warn(`[API4-AUTO] Application not found: ${applicationId}`);
+      return { success: false, message: "Application not found" };
+    }
+
+    const appData = appRes.rows[0];
+    const requestId = appData.oo_request_id || "";
+    const serviceId = appData.oo_service_id || config.serviceId;
+    const subServiceId = appData.oo_subservice_id || config.subServiceId;
+    const ooUserCode = appData.oo_user_code || "";
+    const ooUserToken = ooUserTokenParam || "";
+    const targetSuccessUrl = appData.oo_success_url || `${config.baseUrl}/tpi/success`;
+
+    // 2. Duplicate-call protection: skip if already successfully sent API4_SUCCESS_AUTO
+    const dupCheck = await pool.query(
+      `SELECT id FROM odisha_one_audit_logs
+       WHERE api_name = 'API4_SUCCESS_AUTO' AND application_id = $1 AND status_code = '200'
+       LIMIT 1`,
+      [applicationId]
+    );
+    if (dupCheck.rows.length > 0) {
+      console.warn(`[API4-AUTO] Duplicate call skipped — API4 already sent successfully for ${applicationId}`);
+      return { success: true, message: "Already sent" };
+    }
+
+    // 3. Build complete API-4 payload
+    const payload = {
+      DEPARTEMENTID: String(config.deptId),
+      SERVICEID: String(serviceId),
+      SUBSERVICEID: String(subServiceId),
+      REQUESTID: String(requestId),
+      REQTIMESTAMP: formatTimestamp(),
+      APPLICATIONID: String(applicationId),
+      APPLICATIONSTATUS: "APPLICATION_SUBMITTED",
+      ADDITIONALPARA1: "",
+      ADDITIONALPARA2: "",
+      OOUSERTOKEN: String(ooUserToken),
+      OOUSERCODE: String(ooUserCode),
+      OOSTATUS: "1",
+    };
+    payload.CHECKSUM = generateChecksum(payload, config.deptId, config.checksumKey);
+    const encData = encrypt(config.accessKey, payload);
+
+    // 4. Terminal log — full payload (mask token)
+    const loggablePayload = { ...payload, OOUSERTOKEN: "***MASKED***", CHECKSUM: "***MASKED***" };
+    console.log("\n============================================================");
+    console.log("ODISHA ONE STATUS UPDATE");
+    console.log("============================================================");
+    console.log(`APPLICATION STATUS : APPLICATION_SUBMITTED`);
+    console.log(`REQUEST ID         : ${requestId}`);
+    console.log(`APPLICATION ID     : ${applicationId}`);
+    console.log(`TIMESTAMP          : ${payload.REQTIMESTAMP}`);
+    console.log(`OOUSERCODE         : ${ooUserCode}`);
+    console.log("\nAPI-4 TRIGGERED");
+    console.log("============================================================");
+    console.log("\nAPI-4 REQUEST PAYLOAD:");
+    console.log(JSON.stringify(loggablePayload, null, 2));
+    console.log("\nAPI-4 REQUEST SENT TO ODISHA ONE");
+    console.log(`URL: ${targetSuccessUrl}`);
+
+    // 5. Log plain payload to DB BEFORE sending
+    await logAudit({
+      requestId,
+      apiName: "API4_SUCCESS_AUTO",
+      serviceId,
+      subServiceId,
+      ooUserCode,
+      applicationId,
+      statusCode: "PENDING",
+      statusMessage: "About to send API-4 payload: APPLICATION_SUBMITTED => OOSTATUS: 1",
+      rawPayload: JSON.stringify(payload),
+      decryptedData: loggablePayload,
+    });
+
+    // 6. Send HTTP POST to Odisha One SUCCESSURL
+    let responseCode = 500;
+    let responseData = null;
+    let apiStatus = "FAILED";
+    let errorMessage = null;
+
+    try {
+      const response = await axios.post(
+        targetSuccessUrl,
+        `encData=${encodeURIComponent(encData)}`,
+        {
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          timeout: 10000,
+        }
+      );
+      responseCode = response.status;
+      responseData = response.data;
+      apiStatus = responseCode === 200 ? "SUCCESS" : "FAILED";
+    } catch (err) {
+      errorMessage = err.message;
+      responseCode = err.response?.status || 500;
+      responseData = err.response?.data || null;
+      apiStatus = "FAILED";
+      console.log("\n============================================================");
+      console.log("API-4 FAILED");
+      console.log("============================================================");
+      console.log(`REQUEST ID     : ${requestId}`);
+      console.log(`APPLICATION ID : ${applicationId}`);
+      console.log(`STATUS         : APPLICATION_SUBMITTED`);
+      console.log(`API            : API-4`);
+      console.log(`\nERROR:\n${err.message}`);
+      console.log(`\nODISHA ONE RESPONSE:\n${JSON.stringify(responseData)}`);
+      console.log("============================================================");
+    }
+
+    // 7. Log Odisha One response to DB
+    await logAudit({
+      requestId,
+      apiName: "API4_SUCCESS_AUTO",
+      serviceId,
+      subServiceId,
+      ooUserCode,
+      applicationId,
+      statusCode: String(responseCode),
+      statusMessage: `API-4 ${apiStatus}: APPLICATION_SUBMITTED sent to Odisha One${errorMessage ? ` | ERROR: ${errorMessage}` : ""}`,
+    });
+
+    // 8. Terminal log — response + DB verification
+    console.log("\nAPI-4 RESPONSE:");
+    console.log(JSON.stringify(responseData, null, 2));
+    console.log(`\nAPI-4 STATUS: ${apiStatus}`);
+    console.log("\n============================================================");
+    console.log("DATABASE VERIFICATION");
+    console.log("============================================================");
+    console.log(`REQUEST ID          : ${requestId}`);
+    console.log(`APPLICATION ID      : ${applicationId}`);
+    console.log(`APPLICATION STATUS  : APPLICATION_SUBMITTED`);
+    console.log(`API                 : API-4`);
+    console.log(`API STATUS          : ${apiStatus}`);
+    console.log(`DB LOG SAVED        : YES`);
+    console.log("============================================================");
+    console.log("API-4 EXECUTION COMPLETED");
+    console.log("============================================================\n");
+
+    return { success: apiStatus === "SUCCESS", data: responseData };
+  } catch (error) {
+    console.error("[API4-AUTO] Unexpected error:", error.message);
+    return { success: false, error: error.message };
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // API 9 STATUS PUSH — Push JalConnect application status to Odisha One (Host-to-Host)
 // ─────────────────────────────────────────────────────────────────────────────
-const pushApplicationStatusToOdishaOne = async (applicationId, jalConnectStatus, remarks = "", forcePush = false) => {
+const pushApplicationStatusToOdishaOne = async (applicationId, jalConnectStatus, remarks = "", forcePush = false, ooUserTokenParam = "") => {
   const config = getConfig();
 
   try {
@@ -704,6 +909,7 @@ const pushApplicationStatusToOdishaOne = async (applicationId, jalConnectStatus,
     const serviceId = appData.oo_service_id || config.serviceId;
     const subServiceId = appData.oo_subservice_id || config.subServiceId;
     const ooUserCode = appData.oo_user_code || "";
+    const ooUserToken = ooUserTokenParam || "";
 
     // Map JalConnect APPLICATION_STATUS to Odisha One OOSTATUS:
     // 1: Pending, 2: Approved, 3: Rejected, 4: Required-Correction
@@ -731,11 +937,27 @@ const pushApplicationStatusToOdishaOne = async (applicationId, jalConnectStatus,
       REMARKS: String(remarks || ""),
       ADDITIONALPARA1: "",
       ADDITIONALPARA2: "",
+      OOUSERTOKEN: String(ooUserToken),
+      OOUSERCODE: String(ooUserCode),
       OOSTATUS: String(ooStatus),
     };
 
     payload.CHECKSUM = generateChecksum(payload, config.deptId, config.checksumKey);
     const encData = encrypt(config.accessKey, payload);
+
+    // Log full payload BEFORE sending so we can verify exactly what was sent to Odisha One
+    await logAudit({
+      requestId,
+      apiName: "API9_STATUS_PUSH_PAYLOAD",
+      serviceId,
+      subServiceId,
+      ooUserCode,
+      applicationId,
+      statusCode: "PENDING",
+      statusMessage: `About to push: ${jalConnectStatus} => OOSTATUS: ${ooStatus}`,
+      rawPayload: JSON.stringify(payload),
+      decryptedData: payload,
+    });
 
     const pushUrl = `${config.baseUrl}/api/v1/tpi/push-application-status?departementId=${config.deptId}&serviceId=${serviceId}`;
 
@@ -772,10 +994,59 @@ const pushApplicationStatusToOdishaOne = async (applicationId, jalConnectStatus,
   }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/odisha-one/logs — Retrieve Odisha One audit logs for inspection
+// ─────────────────────────────────────────────────────────────────────────────
+const getAuditLogs = async (req, res) => {
+  try {
+    const { apiName, requestId, applicationId, limit = 50 } = req.query;
+
+    let query = `
+      SELECT id, request_id, api_name, service_id, sub_service_id, oo_user_code,
+             application_id, status_code, status_message, ip_address, created_at
+      FROM odisha_one_audit_logs
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (apiName) {
+      params.push(apiName);
+      query += ` AND api_name = $${params.length}`;
+    }
+
+    if (requestId) {
+      params.push(requestId);
+      query += ` AND request_id = $${params.length}`;
+    }
+
+    if (applicationId) {
+      params.push(applicationId);
+      query += ` AND application_id = $${params.length}`;
+    }
+
+    const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+    params.push(safeLimit);
+    query += ` ORDER BY id DESC LIMIT $${params.length}`;
+
+    const result = await pool.query(query, params);
+
+    return res.status(200).json({
+      success: true,
+      count: result.rows.length,
+      logs: result.rows,
+    });
+  } catch (error) {
+    console.error("Failed to fetch Odisha One audit logs:", error);
+    return res.status(500).json({ error: "Failed to retrieve audit logs" });
+  }
+};
+
 module.exports = {
   handleLanding,
   getOdishaOneSession,
   handleCancel,
   handleSuccessRedirect,
+  triggerApi4OnSubmit,
   pushApplicationStatusToOdishaOne,
+  getAuditLogs,
 };

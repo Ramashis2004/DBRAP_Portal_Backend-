@@ -536,6 +536,8 @@ const ensureOrganisationSchema = async () => {
   await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS oo_service_id TEXT`);
   await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS oo_subservice_id TEXT`);
   await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS registration_source TEXT DEFAULT 'DIRECT'`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS oo_success_url TEXT`);
+
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS odisha_one_audit_logs (
@@ -551,7 +553,14 @@ const ensureOrganisationSchema = async () => {
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
+  // Add missing columns if not already present (idempotent)
+  await pool.query(`ALTER TABLE odisha_one_audit_logs ADD COLUMN IF NOT EXISTS ip_address TEXT`);
+  await pool.query(`ALTER TABLE odisha_one_audit_logs ADD COLUMN IF NOT EXISTS user_agent TEXT`);
+  await pool.query(`ALTER TABLE odisha_one_audit_logs ADD COLUMN IF NOT EXISTS raw_payload TEXT`);
+  await pool.query(`ALTER TABLE odisha_one_audit_logs ADD COLUMN IF NOT EXISTS decrypted_data TEXT`);
+  await pool.query(`ALTER TABLE odisha_one_audit_logs ADD COLUMN IF NOT EXISTS execution_time_ms INTEGER`);
 };
+
 
 const startServer = async () => {
   try {
