@@ -2,6 +2,7 @@ const pool = require("../db/db");
 const { APPLICATION_STATUS } = require("../constraints/application_status_enum");
 const { saveApplicationHistory } = require("./historyController");
 const { handleSlaOnStatusChange } = require("./slaTrackingController");
+const { pushApplicationStatusToOdishaOne } = require("./odishaOneController");
 
 const getPaymentVerificationApplications = async (req, res) => {
   try {
@@ -183,13 +184,19 @@ const verifyPayment = async (req, res) => {
       remarks || null
     );
 
-    // ── SLA tracking ──────────────────────────────────────────────────────
     await handleSlaOnStatusChange({
       applicationId,
       newStatus:   finalStatus,
       actorUserId: userId || null,
       assignedTo:  req.body?.assignedTo ?? req.body?.assigned_to ?? null,
     });
+
+    // Trigger API-9 for Odisha One when PAYMENT_RECEIPT_VERIFIED
+    if (finalStatus === APPLICATION_STATUS.PAYMENT_RECEIPT_VERIFIED) {
+      pushApplicationStatusToOdishaOne(applicationId, finalStatus, remarks || "").catch((err) => {
+        console.error("API-9 PAYMENT_RECEIPT_VERIFIED push error:", err.message);
+      });
+    }
 
     return res.status(200).json({
       message: "Payment verification status updated successfully",

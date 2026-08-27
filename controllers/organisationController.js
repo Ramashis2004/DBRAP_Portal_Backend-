@@ -348,12 +348,21 @@ await saveApplicationHistory(
     );
 
     await handleSiteVisitUploadSla({
-  applicationId,
-  inspectionDate: req.body.inspection_date || null,
-  inspectionTime: req.body.inspection_time || null,
-  actorUserId: req.body.userId || null,
-  assignedTo: req.body?.assignedTo ?? req.body?.assigned_to ?? null,
-});
+      applicationId,
+      inspectionDate: req.body.inspection_date || null,
+      inspectionTime: req.body.inspection_time || null,
+      actorUserId: req.body.userId || null,
+      assignedTo: req.body?.assignedTo ?? req.body?.assigned_to ?? null,
+    });
+
+    // Trigger API 9 status push to Odisha One for JE_VERIFIED_REPORT_UPLOADED
+    pushApplicationStatusToOdishaOne(
+      applicationId,
+      APPLICATION_STATUS.JE_VERIFIED_REPORT_UPLOADED,
+      req.body.remarks || ""
+    ).catch((err) => {
+      console.error("API 9 JE_VERIFIED_REPORT_UPLOADED status push background error:", err);
+    });
     if (result.rowCount === 0) {
       return res.status(404).json({ error: "Organisation not found" });
     }

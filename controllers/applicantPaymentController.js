@@ -5,6 +5,7 @@ const fs   = require("fs");
 const { saveApplicationHistory }   = require("./historyController");
 const { APPLICATION_STATUS }       = require("../constraints/application_status_enum");
 const { handleSlaOnStatusChange }  = require("./slaTrackingController");
+const { triggerApi4OnSubmit }      = require("./odishaOneController");
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -162,6 +163,11 @@ const uploadApplicantPaymentReceipt = async (req, res) => {
       newStatus:   APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED,
       actorUserId: userId,
       assignedTo:  null,
+    });
+
+    // Trigger Odisha One API-4 server-to-server push for PAYMENT_RECEIPT_UPLOADED
+    triggerApi4OnSubmit(applicationId, "", APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED).catch((err) => {
+      console.error("API-4 PAYMENT_RECEIPT_UPLOADED push error:", err.message);
     });
 
     return res.json({

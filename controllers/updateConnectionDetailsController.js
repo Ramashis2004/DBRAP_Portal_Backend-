@@ -3,6 +3,7 @@
 const db = require("../db/db"); // ✅ matches your server.js path
 const { saveApplicationHistory } = require("./historyController");
 const { handleSlaOnStatusChange } = require("./slaTrackingController");
+const { pushApplicationStatusToOdishaOne } = require("./odishaOneController");
 
 // GET /api/officer/connection-details/applications?blockCode=
 const getApplicationsForConnectionUpdate = async (req, res) => {
@@ -199,6 +200,11 @@ await saveApplicationHistory(
       newStatus: "CONNECTION_DETAILS_UPDATED",
       actorUserId: req.body.officerId || null,
       assignedTo: req.body?.assignedTo ?? req.body?.assigned_to ?? null,
+    });
+
+    // Trigger API-9 for Odisha One when CONNECTION_DETAILS_UPDATED
+    pushApplicationStatusToOdishaOne(applicationId, "CONNECTION_DETAILS_UPDATED", "").catch((err) => {
+      console.error("API-9 CONNECTION_DETAILS_UPDATED push error:", err.message);
     });
 
     return res.json({
