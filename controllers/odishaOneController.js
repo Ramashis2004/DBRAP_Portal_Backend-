@@ -669,38 +669,54 @@ const handleCancel = async (req, res) => {
   const targetCancelUrl =
     cancelUrl ||
     process.env.ODISHA_ONE_CANCEL_URL ||
-    `${config.baseUrl}/tpi/cancel` ||
-    "https://odishaone.gov.in/odisha-one/tpi/cancel";
+    `${config.baseUrl}/tpi/cancel`;
 
   const payload = {
     DEPARTEMENTID: String(config.deptId),
-    SERVICEID: String(serviceId || config.serviceId),
-    SUBSERVICEID: String(subServiceId || config.subServiceId),
-    REQUESTID: String(requestId || ""),
-    REQTIMESTAMP: formatTimestamp(),
-    OOUSERTOKEN: String(ooUserToken || ""),
-    OOUSERCODE: String(ooUserCode || ""),
+    SERVICEID:     String(serviceId || config.serviceId),
+    SUBSERVICEID:  String(subServiceId || ""),
+    REQUESTID:     String(requestId || ""),
+    REQTIMESTAMP:  formatTimestamp(),
+    OOUSERTOKEN:   String(ooUserToken || ""),
+    OOUSERCODE:    String(ooUserCode || ""),
   };
 
   payload.CHECKSUM = generateChecksum(payload, config.deptId, config.checksumKey);
-  const encData = encrypt(config.accessKey, payload);
+  const encData    = encrypt(config.accessKey, payload);
+
+  // ── Complete Terminal Log ──────────────────────────────────────────────────
+  const loggable = { ...payload, OOUSERTOKEN: "***MASKED***", CHECKSUM: "***MASKED***" };
+  console.log("\n============================================================");
+  console.log("ODISHA ONE API-3 CANCEL PAYLOAD (RETURN TO ODISHA ONE)");
+  console.log("============================================================");
+  console.log(`API Name           : API-3 (Cancel / Return to Odisha One)`);
+  console.log(`Request ID         : ${payload.REQUESTID}`);
+  console.log(`Department ID      : ${payload.DEPARTEMENTID}`);
+  console.log(`Service ID         : ${payload.SERVICEID}`);
+  console.log(`User Code          : ${payload.OOUSERCODE}`);
+  console.log(`REQTIMESTAMP       : ${payload.REQTIMESTAMP}`);
+  console.log(`Target CANCELURL   : ${targetCancelUrl}`);
+  console.log(`\nFull Payload (Before Encryption):`);
+  console.log(JSON.stringify(loggable, null, 2));
+  console.log(`\nencData (first 60 chars): ${String(encData).substring(0, 60)}...`);
+  console.log("============================================================");
+  console.log("STATUS             : 200 OK — Browser will POST encData to CANCELURL");
+  console.log("============================================================\n");
 
   await logAudit({
     requestId,
-    apiName: "API3_CANCEL",
-    serviceId,
-    subServiceId,
+    apiName:       "API3_CANCEL",
+    serviceId:     payload.SERVICEID,
+    subServiceId:  payload.SUBSERVICEID,
     ooUserCode,
-    statusCode: "200",
-    statusMessage: "User cancelled application, redirecting to Odisha One",
+    statusCode:    "200",
+    statusMessage: "API-3 Cancel contract generated, redirecting to Odisha One",
+    rawPayload:    JSON.stringify(payload),
+    decryptedData: loggable,
   });
 
-  if (req.accepts("html") && !req.xhr) {
-    return renderPostRedirect(res, targetCancelUrl, encData);
-  }
-
   return res.status(200).json({
-    success: true,
+    success:   true,
     cancelUrl: targetCancelUrl,
     encData,
   });
@@ -1132,11 +1148,95 @@ const getAuditLogs = async (req, res) => {
   }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// API 12 REQUIRED CORRECTION REDIRECT — POST /api/odisha-one/required-correction
+// Called after PAYMENT_RECEIPT_UPLOADED to redirect citizen back to Odisha One
+// ─────────────────────────────────────────────────────────────────────────────
+const handleRequiredCorrectionRedirect = async (req, res) => {
+  const config = getConfig();
+  const {
+    requestId,
+    serviceId,
+    subServiceId,
+    ooUserToken,
+    ooUserCode,
+    applicationId,
+    applicationStatus,
+    ooStatus,
+    requiredCorrectionUrl,
+  } = req.body;
+
+  const targetUrl =
+    requiredCorrectionUrl ||
+    `${config.baseUrl}/api/v1/tpi/required-correction-request`;
+
+  const payload = {
+    DEPARTEMENTID:     String(config.deptId),
+    SERVICEID:         String(serviceId || config.serviceId),
+    SUBSERVICEID:      String(subServiceId || ""),
+    REQUESTID:         String(requestId || ""),
+    REQTIMESTAMP:      formatTimestamp(),
+    OOUSERTOKEN:       String(ooUserToken || ""),
+    OOUSERCODE:        String(ooUserCode || ""),
+    APPLICATIONID:     String(applicationId || ""),
+    APPLICATIONSTATUS: String(applicationStatus || "PAYMENT_RECEIPT_UPLOADED"),
+    OOSTATUS:          String(ooStatus || "Pending"),
+    REMARKS:           "Payment receipt uploaded successfully",
+  };
+
+  payload.CHECKSUM = generateChecksum(payload, config.deptId, config.checksumKey);
+  const encData    = encrypt(config.accessKey, payload);
+
+  // ── Complete Terminal Log ──────────────────────────────────────────────────
+  const loggable = { ...payload, OOUSERTOKEN: "***MASKED***", CHECKSUM: "***MASKED***" };
+  console.log("\n============================================================");
+  console.log("ODISHA ONE API-12 REQUIRED CORRECTION REDIRECT");
+  console.log("============================================================");
+  console.log(`API Name           : API-12 (Required Correction Redirect)`);
+  console.log(`Trigger Event      : PAYMENT_RECEIPT_UPLOADED`);
+  console.log(`Application ID     : ${applicationId}`);
+  console.log(`Request ID         : ${requestId}`);
+  console.log(`Department ID      : ${config.deptId}`);
+  console.log(`Service ID         : ${serviceId || config.serviceId}`);
+  console.log(`User Code          : ${ooUserCode}`);
+  console.log(`APPLICATIONSTATUS  : ${payload.APPLICATIONSTATUS}`);
+  console.log(`OOSTATUS           : ${payload.OOSTATUS}`);
+  console.log(`REMARKS            : ${payload.REMARKS}`);
+  console.log(`REQTIMESTAMP       : ${payload.REQTIMESTAMP}`);
+  console.log(`\nTarget URL         : ${targetUrl}`);
+  console.log(`\nFull Payload (Before Encryption):`);
+  console.log(JSON.stringify(loggable, null, 2));
+  console.log(`\nencData (first 60 chars): ${String(encData).substring(0, 60)}...`);
+  console.log("============================================================");
+  console.log("STATUS             : 200 OK — Browser will POST to Odisha One");
+  console.log("============================================================\n");
+
+  await logAudit({
+    requestId,
+    apiName:       "API12_REQUIRED_CORRECTION",
+    serviceId:     serviceId || config.serviceId,
+    subServiceId:  subServiceId || "",
+    ooUserCode,
+    applicationId,
+    statusCode:    "200",
+    statusMessage: `API-12 redirect built: PAYMENT_RECEIPT_UPLOADED → REQUIREDCORRECTIONURL`,
+    rawPayload:    JSON.stringify(payload),
+    decryptedData: loggable,
+  });
+
+  return res.status(200).json({
+    success:     true,
+    redirectUrl: targetUrl,
+    encData,
+  });
+};
+
 module.exports = {
   handleLanding,
   getOdishaOneSession,
   handleCancel,
   handleSuccessRedirect,
+  handleRequiredCorrectionRedirect,
   triggerApi4OnSubmit,
   pushApplicationStatusToOdishaOne,
   getAuditLogs,

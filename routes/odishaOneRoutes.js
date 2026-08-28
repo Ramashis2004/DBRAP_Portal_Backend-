@@ -4,6 +4,7 @@ const {
   getOdishaOneSession,
   handleCancel,
   handleSuccessRedirect,
+  handleRequiredCorrectionRedirect,
   getAuditLogs,
 } = require("../controllers/odishaOneController");
 
@@ -22,7 +23,11 @@ router.post("/cancel", handleCancel);
 // API 4: Success API after registration
 router.post("/success", handleSuccessRedirect);
 
+// API 12: Required Correction Redirect — after PAYMENT_RECEIPT_UPLOADED
+router.post("/required-correction", handleRequiredCorrectionRedirect);
+
 // Audit log inspection API
 router.get("/logs", getAuditLogs);
 
 module.exports = router;
+
