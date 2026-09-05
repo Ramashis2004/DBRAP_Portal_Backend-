@@ -329,14 +329,22 @@ const handleLanding = async (req, res) => {
     });
 
     let originedFromOO = "NO";
+    let verifyResponseData = null;
+
+    // Decrypt encData if response is encrypted or parse direct JSON
     if (api2Response && api2Response.data && api2Response.data.encData) {
       const decryptedVerify = decrypt(config.accessKey, api2Response.data.encData);
       if (decryptedVerify) {
-        const verifyData = JSON.parse(decryptedVerify);
-        originedFromOO = verifyData.ORIGINEDFROMOO || "NO";
+        try {
+          verifyResponseData = JSON.parse(decryptedVerify);
+          originedFromOO = verifyResponseData.ORIGINEDFROMOO || "NO";
+        } catch (e) {
+          console.error("Failed to parse decrypted API-2 JSON:", e.message);
+        }
       }
-    } else if (api2Response && api2Response.data && api2Response.data.ORIGINEDFROMOO) {
-      originedFromOO = api2Response.data.ORIGINEDFROMOO;
+    } else if (api2Response && api2Response.data) {
+      verifyResponseData = api2Response.data;
+      originedFromOO = api2Response.data.ORIGINEDFROMOO || "NO";
     }
 
     // In development/test mode if external portal is unreachable or testing, verify fallback
@@ -346,10 +354,29 @@ const handleLanding = async (req, res) => {
     }
 
     const api2ResponseCode = api2Response ? api2Response.status : 500;
-    console.log("\nOdisha One API-2 Response:");
-    console.log(JSON.stringify(api2Response ? api2Response.data : null, null, 2));
-    console.log(`HTTP Status        : ${api2ResponseCode}`);
-    console.log(`Verification       : ORIGINEDFROMOO = ${originedFromOO}`);
+
+    // Real-time log: print all specification fields from API-2 Response
+    console.log("\n============================================================");
+    console.log("ODISHA ONE API-2 VERIFICATION RESPONSE (DECRYPTED)");
+    console.log("============================================================");
+    console.log(`HTTP Status Code    : ${api2ResponseCode}`);
+    if (verifyResponseData) {
+      console.log(`REQSTATUSCODE       : ${verifyResponseData.REQSTATUSCODE || "N/A"}`);
+      console.log(`MSSSAGE             : ${verifyResponseData.MSSSAGE || verifyResponseData.MESSAGE || "N/A"}`);
+      console.log(`DEPARTEMENTID       : ${verifyResponseData.DEPARTEMENTID || verifyResponseData.DEPARTMENTID || "N/A"}`);
+      console.log(`SERVICEID           : ${verifyResponseData.SERVICEID || "N/A"}`);
+      console.log(`SUBSERVICEID        : ${verifyResponseData.SUBSERVICEID || "N/A"}`);
+      console.log(`REQUESTID           : ${verifyResponseData.REQUESTID || "N/A"}`);
+      console.log(`REQTIMESTAMP        : ${verifyResponseData.REQTIMESTAMP || "N/A"}`);
+      console.log(`ORIGINEDFROMOO      : ${verifyResponseData.ORIGINEDFROMOO || "N/A"}`);
+      console.log(`OOUSERCODE          : ${verifyResponseData.OOUSERCODE || "N/A"}`);
+      console.log(`CHECKSUM            : ${verifyResponseData.CHECKSUM || "N/A"}`);
+      console.log("\nFull Decrypted JSON Object:");
+      console.log(JSON.stringify(verifyResponseData, null, 2));
+    } else {
+      console.log("Raw Response Data   :", JSON.stringify(api2Response ? api2Response.data : null));
+    }
+    console.log(`Verification Result : ORIGINEDFROMOO = ${originedFromOO}`);
     console.log("============================================================\n");
 
     if (originedFromOO !== "YES") {
@@ -363,6 +390,7 @@ const handleLanding = async (req, res) => {
         statusMessage: "ORIGINEDFROMOO verification failed",
         ipAddress,
         userAgent,
+        decryptedData: verifyResponseData,
         executionTimeMs: Date.now() - startTime,
       });
 
@@ -384,6 +412,7 @@ const handleLanding = async (req, res) => {
       statusMessage: "ORIGINEDFROMOO verified successfully",
       ipAddress,
       userAgent,
+      decryptedData: verifyResponseData,
       executionTimeMs: Date.now() - startTime,
     });
 

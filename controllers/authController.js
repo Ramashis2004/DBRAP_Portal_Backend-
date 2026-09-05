@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const pool = require("../db/db");
 const { saveLoginHistory } = require("./historyController");
+const { sendOTPSMS } = require("../utility/sms");
 const jwt = require("jsonwebtoken");
 
 
@@ -373,7 +374,7 @@ const sendCredentialsSms = async ({ mobileNo, loginId, password }) => {
     department_id: SMS_DEPARTMENT_ID,
     action: SMS_CREDENTIAL_ACTION,
     source: SMS_SOURCE,
-    sms_content: `Your OTP for Gramsewa Nidhi Portal is ${password}. Please do not share this with anyone. Panchayati Raj & Drinking Water Dept. – Govt. of Odisha`,
+    sms_content: `Your Gramsewa Nidhi Portal login credentials are User ID: ${loginId}, Password: ${password}. Please do not share these credentials. Panchayati Raj & Drinking Water Dept. - Govt. of Odisha`,
   });
 
   let response;
@@ -470,11 +471,7 @@ const sendApplicantRegistrationOtp = async (req, res) => {
       return res.status(409).json({ error: "An applicant with this mobile number already exists" });
     }
 
-    await sendCredentialsSms({
-      mobileNo: trimmedMobile,
-      loginId: trimmedMobile,
-      password: otp,
-    });
+    await sendOTPSMS(trimmedMobile, otp);
 
     return res.status(200).json({ message: "OTP sent to your mobile number." });
   } catch (error) {
@@ -1792,5 +1789,9 @@ module.exports = {
   loginOfficer,
   logoutOfficer,
   registerApplicant,
+  hashPassword,
+  generatePassword,
+  generateApplicantUserId,
+  sendCredentialsSms,
   checkSessionValid,
 };

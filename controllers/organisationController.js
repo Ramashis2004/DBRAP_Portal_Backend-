@@ -10,6 +10,54 @@ const APPLICATION_STATUS_VALUES = Object.values(APPLICATION_STATUS);
 const isValidApplicationStatus = (value) => APPLICATION_STATUS_VALUES.includes(value);
 const normalizeApplicationStatus = (value) => String(value || "").trim().toUpperCase();
 
+const resolveWorkflowStatus = (requestedStatus, currentStatus) => {
+  const requested = normalizeApplicationStatus(requestedStatus);
+  const current = normalizeApplicationStatus(currentStatus);
+
+  if (requested === APPLICATION_STATUS.APPLICATION_FORWARDED_TO_JE) {
+    if (current === APPLICATION_STATUS.APPLICATION_SUBMITTED_FOR_TRANSFER) {
+      return APPLICATION_STATUS.TRANSFER_FORWARDED_TO_JE;
+    }
+    if (current === APPLICATION_STATUS.APPLICATION_SUBMITTED_FOR_CANCELLATION) {
+      return APPLICATION_STATUS.CANCELLATION_FORWARDED_TO_JE;
+    }
+    if (current === APPLICATION_STATUS.APPLICATION_SUBMITTED_FOR_AMENDMENT) {
+      return APPLICATION_STATUS.AMENDMENT_FORWARDED_TO_JE;
+    }
+  }
+
+  if (requested === APPLICATION_STATUS.APPLICATION_APPROVED) {
+    if (current === APPLICATION_STATUS.TRANSFER_SITE_VISIT_REPORT_UPLOADED) {
+      return APPLICATION_STATUS.TRANSFER_APPROVED;
+    }
+    if (current === APPLICATION_STATUS.CANCELLATION_SITE_VISIT_REPORT_UPLOADED) {
+      return APPLICATION_STATUS.CANCELLATION_APPROVED;
+    }
+    if (current === APPLICATION_STATUS.AMENDMENT_FORWARDED_TO_JE) {
+      return APPLICATION_STATUS.AMENDMENT_DOCUMENTS_VERIFIED_BY_JE;
+    }
+    if (current === APPLICATION_STATUS.AMENDMENT_DOCUMENTS_VERIFIED_BY_JE) {
+      return APPLICATION_STATUS.AMENDMENT_APPROVED;
+    }
+  }
+
+  return requested;
+};
+
+const resolveJeUploadStatus = (currentStatus) => {
+  const current = normalizeApplicationStatus(currentStatus);
+  if (current === APPLICATION_STATUS.CANCELLATION_FORWARDED_TO_JE) {
+    return APPLICATION_STATUS.CANCELLATION_SITE_VISIT_REPORT_UPLOADED;
+  }
+  if (current === APPLICATION_STATUS.TRANSFER_FORWARDED_TO_JE) {
+    return APPLICATION_STATUS.TRANSFER_SITE_VISIT_REPORT_UPLOADED;
+  }
+  if (current === APPLICATION_STATUS.AMENDMENT_FORWARDED_TO_JE) {
+    return APPLICATION_STATUS.AMENDMENT_DOCUMENTS_VERIFIED_BY_JE;
+  }
+  return APPLICATION_STATUS.JE_VERIFIED_REPORT_UPLOADED;
+};
+
 const registerOrganisation = async (req, res) => {
   const client = await pool.connect();
 
@@ -227,44 +275,50 @@ const currentResult = await pool.query(
       `SELECT application_status, name, applicant_user_id FROM organisation WHERE application_id = $1 LIMIT 1`,
       [applicationId]
     );
+    let currentRow = currentResult.rows[0];
     if (currentResult.rowCount === 0) {
-      return res.status(404).json({ error: "Organisation not found" });
+      return res.status(404).json({ error: "Application not found" });
     }
-    const oldStatus = currentResult.rows[0].application_status;         // ADD
-    const applicantUserId = currentResult.rows[0].applicant_user_id;    // ADD
-    const applicantName = currentResult.rows[0].name;                   // ADD
+    const oldStatus = currentRow.application_status;
+    const resolvedStatus = resolveWorkflowStatus(applicationStatus, oldStatus);
+    const applicantUserId = currentRow.applicant_user_id;    // ADD
+    const applicantName = currentRow.name;                   // ADD
 
-   const result = await pool.query(
+  const result = await pool.query(
   `
   UPDATE organisation
   SET application_status = $1::varchar,
       update_on = NOW(),
+      organisation_name = CASE WHEN $1 = 'AMENDMENT_APPROVED' THEN COALESCE(new_organisation_name, organisation_name) ELSE organisation_name END,
+      establishment_type = CASE WHEN $1 = 'AMENDMENT_APPROVED' THEN COALESCE(new_establishment_type, establishment_type) ELSE establishment_type END,
+      type_of_connection = CASE WHEN $1 = 'AMENDMENT_APPROVED' THEN COALESCE(new_type_of_connection, type_of_connection) ELSE type_of_connection END,
+      water_requirement = CASE WHEN $1 = 'AMENDMENT_APPROVED' THEN COALESCE(new_water_requirement, water_requirement) ELSE water_requirement END,
       remarks = COALESCE($3::varchar, remarks)
   WHERE application_id = $2
   RETURNING application_id, organisation_name, application_status,
             created_at, update_on, remarks
   `,
-  [applicationStatus, applicationId, req.body.remarks || null]
+  [resolvedStatus, applicationId, req.body.remarks || null]
 );
 await saveApplicationHistory(
       applicationId,          // applicationId
   req.body.userId || null,   // JE officer verifying payment
       applicantName,          // userName
-      applicationStatus,      // actionType → current (new) status
-      oldStatus,              // oldValue   → what it WAS
-      applicationStatus,      // newValue   → what it changed TO
+      resolvedStatus,
+      oldStatus,
+      resolvedStatus,
       req.body.remarks || null
     );
 
     await handleSlaOnStatusChange({
       applicationId,
-      newStatus: applicationStatus,
+      newStatus: resolvedStatus,
       actorUserId: req.body.userId || null,
       assignedTo: req.body?.assignedTo ?? req.body?.assigned_to ?? null,
     });
 
     // Trigger API 9 Host-to-Host status update to Odisha One
-    pushApplicationStatusToOdishaOne(applicationId, applicationStatus, req.body.remarks || "").catch((err) => {
+    pushApplicationStatusToOdishaOne(applicationId, resolvedStatus, req.body.remarks || "").catch((err) => {
       console.error("API 9 status push background error:", err);
     });
 
@@ -273,7 +327,7 @@ await saveApplicationHistory(
     }
 
     return res.status(200).json({
-      message: "Organisation application status updated successfully",
+      message: "Application status updated successfully",
       data: result.rows[0],
     });
   } catch (error) {
@@ -296,33 +350,31 @@ const uploadSiteVisitReport = async (req, res) => {
 
   try {
 
-     const currentResult = await pool.query(
-      `
-        SELECT
-          o.application_status,
-          o.name,
-          o.applicant_user_id,
-          dv.division_name,o.update_on
-        FROM organisation o
-        LEFT JOIN dbrap_lgd_block lb
-          ON lb.block_code::text = o.block_code::text
-        LEFT JOIN dbrap_division dv
-          ON dv.division_code::text = lb.division_code::text
-         AND dv.dist_id::text = lb.district_code::text
-        WHERE o.application_id = $1
-        LIMIT 1
-      `,
-      [applicationId]
-    );
-    if (currentResult.rowCount === 0) {
-      return res.status(404).json({ error: "Organisation not found" });
+    const organisationResult = await pool.query(
+        `
+          SELECT o.application_status, o.name, o.applicant_user_id, dv.division_name, o.update_on
+          FROM organisation o
+          LEFT JOIN dbrap_lgd_block lb
+            ON lb.block_code::text = o.block_code::text
+          LEFT JOIN dbrap_division dv
+            ON dv.division_code::text = lb.division_code::text
+           AND dv.dist_id::text = lb.district_code::text
+          WHERE o.application_id = $1
+          LIMIT 1
+        `,
+        [applicationId]
+      );
+    if (organisationResult.rowCount === 0) {
+      return res.status(404).json({ error: "Application not found" });
     }
-    const oldStatus = currentResult.rows[0].application_status;         // ADD
-    const applicantUserId = currentResult.rows[0].applicant_user_id;    // ADD
-    const applicantName = currentResult.rows[0].name;                  // ADD
-    const divisionName = currentResult.rows[0].division_name || null;
+    const currentRow = organisationResult.rows[0];
+    const oldStatus = currentRow.application_status;
+    const applicantUserId = currentRow.applicant_user_id;
+    const applicantName = currentRow.name;
+    const divisionName = currentRow.division_name || null;
     const inspectionDate = req.body.inspection_date || null;
 const inspectionTime = req.body.inspection_time || null;
+    const resolvedStatus = resolveJeUploadStatus(oldStatus);
 
     const result = await pool.query(
       `
@@ -335,15 +387,15 @@ const inspectionTime = req.body.inspection_time || null;
         WHERE application_id = $3
         RETURNING application_id, organisation_name, application_status, site_visit_report, update_on
       `,
-      [reportFile.path, APPLICATION_STATUS.JE_VERIFIED_REPORT_UPLOADED, applicationId, inspectionDate, inspectionTime]
+      [reportFile.path, resolvedStatus, applicationId, inspectionDate, inspectionTime]
     );
 await saveApplicationHistory(
       applicationId,
   req.body.userId || null,   
       applicantName,
-      APPLICATION_STATUS.JE_VERIFIED_REPORT_UPLOADED, // actionType → current status
-      oldStatus,                                       // oldValue   → what it WAS
-      APPLICATION_STATUS.JE_VERIFIED_REPORT_UPLOADED, // newValue   → what it changed TO
+      resolvedStatus,
+      oldStatus,
+      resolvedStatus,
       req.body.remarks || null
     );
 
@@ -399,9 +451,8 @@ const viewSiteVisitReport = async (req, res) => {
     );
 
     if (result.rowCount === 0) {
-      return res.status(404).json({ error: "Organisation not found" });
+      return res.status(404).json({ error: "Application not found" });
     }
-
     const reportPath = result.rows[0]?.site_visit_report;
 
     if (!reportPath) {
@@ -429,6 +480,24 @@ const DOCUMENT_COLUMNS = {
   identity_proof: "identity_proof",
 };
 
+const resolveStoredFilePath = (storedPath) => {
+  const configuredUploadPath = process.env.UPLOAD_PATH || "uploads";
+  const normalizedPath = String(storedPath || "").trim();
+  const candidates = [path.resolve(normalizedPath)];
+
+  if (!path.isAbsolute(normalizedPath)) {
+    candidates.push(path.resolve(configuredUploadPath, normalizedPath));
+    candidates.push(
+      path.resolve(
+        configuredUploadPath,
+        normalizedPath.replace(/^uploads[\\/]/i, "")
+      )
+    );
+  }
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+};
+
 const viewOrganisationDocument = async (req, res) => {
   const applicationId = String(req.params.applicationId || "").trim();
   const documentType = String(req.params.documentType || "").trim();
@@ -454,18 +523,17 @@ const viewOrganisationDocument = async (req, res) => {
     );
 
     if (result.rowCount === 0) {
-      return res.status(404).json({ error: "Organisation not found" });
+      return res.status(404).json({ error: "Application not found" });
     }
-
     const documentPath = result.rows[0]?.document_path;
 
     if (!documentPath) {
       return res.status(404).json({ error: "Document not available" });
     }
 
-    const resolvedPath = path.resolve(documentPath);
+    const resolvedPath = resolveStoredFilePath(documentPath);
 
-    if (!fs.existsSync(resolvedPath)) {
+    if (!resolvedPath) {
       return res.status(404).json({ error: "Document file not found" });
     }
 

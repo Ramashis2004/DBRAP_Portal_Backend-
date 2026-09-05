@@ -98,6 +98,9 @@ const getSEDashboardApplications = async (req, res) => {
                o.district_code, o.block_code,
                o.district, o.block, o.gram_panchayat, o.village, o.habitation,
                o.name, o.gender, o.email, o.mobile_number, o.type_of_connection, o.water_requirement,
+               o.original_application_id, o.transfer_user_flag, o.transfer_user_id,
+               o.transfer_user_name, o.transfer_user_mobile, o.transfer_user_email,
+               o.transfer_user_gender, o.transfer_user_organisation,
                o.property_proof, o.registration_proof, o.ownership_proof,
                o.owner_indemnity_bond, o.identity_proof
         FROM organisation o

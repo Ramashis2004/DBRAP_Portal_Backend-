@@ -2,7 +2,6 @@ const pool = require("../db/db");
 const { APPLICATION_STATUS } = require("../constraints/application_status_enum");
 const { saveApplicationHistory } = require("./historyController"); // ← add this
 const { handleSlaOnStatusChange } = require("./slaTrackingController");
-// Odisha One integration handled by frontend (API-4 browser redirect)
 
 const APPLICANT_ROLE_ID = "7";
 
@@ -64,7 +63,6 @@ const getApplicantNavigation = async (req, res) => {
       `
         SELECT
           m.menu_id, m.menu_name, m.menu_description,
-          rmm.serial_no,
           o.option_id, o.option_name, o.option_description, o.option_url,
           o.priority AS option_priority
         FROM dbrap_role_menu_mapping rmm
@@ -147,6 +145,8 @@ const registerApplicantOrganisation = async (req, res) => {
       oo_subservice_id,
       oo_user_token,
       registration_source,
+      transfer_user_flag,
+      transfer_source_application_id,
     } = req.body;
 
     if (!applicant_user_id) {
@@ -187,6 +187,24 @@ const registerApplicantOrganisation = async (req, res) => {
       return res.status(404).json({ error: "Applicant not found" });
     }
 
+    const isTransferApplication = String(transfer_user_flag || "false") === "true";
+    const transferSourceApplicationId = String(transfer_source_application_id || "").trim();
+    let linkedOriginalApplicationId = null;
+    if (isTransferApplication) {
+      const transferResult = await client.query(
+        `SELECT application_id, original_application_id FROM organisation
+         WHERE application_id = $1 AND transfer_user_id = $2 AND transfer_user_flag = true
+           AND request_type = 'CANCELLATION'
+         LIMIT 1`,
+        [transferSourceApplicationId, applicant.id]
+      );
+      if (transferResult.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({ error: "This user is not authorized for the transfer application" });
+      }
+      linkedOriginalApplicationId = transferResult.rows[0].original_application_id;
+    }
+
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [String(block_code)]);
 
     const rawBlockCode = String(block_code).replace(/^CA/i, "").trim();
@@ -209,7 +227,8 @@ const registerApplicantOrganisation = async (req, res) => {
       `
         INSERT INTO organisation
         (
-          applicant_user_id, application_id,
+          applicant_user_id, application_id, original_application_id,
+          transfer_user_flag, transfer_user_id, transfer_source_application_id,
           organisation_name, establishment_type,
           district_code, block_code,
           district, block, gram_panchayat_code, gram_panchayat, village, habitation,
@@ -221,21 +240,23 @@ const registerApplicantOrganisation = async (req, res) => {
           oo_user_code, oo_request_id, oo_service_id, oo_subservice_id, registration_source
         )
         VALUES (
-          $1,  $2,
-          $3,  $4,
-          $5,  $6,
-          $7,  $8,  $9,  $10, $11, $12,
-          $13, $14, $15, $16,
-          $17, $18,
-          $19,
-          $20, $21, $22, $23, $24,
-          $25, $26, $27, $28, $29
+          $1,  $2,  $3,  $4,  $5,  $6,
+          $7,  $8,  $9,  $10, $11, $12, $13, $14, $15,
+          $16, $17, $18, $19,
+          $20, $21,
+          $22,
+          $23, $24, $25, $26, $27,
+          $28, $29, $30, $31, $32, $33
         )
         RETURNING *
       `,
       [
         applicant.id,
         application_id,
+        linkedOriginalApplicationId,
+        isTransferApplication,
+        isTransferApplication ? applicant.id : null,
+        isTransferApplication ? transferSourceApplicationId : null,
         organisation_name,
         establishment_type,
         district_code || null,
@@ -252,7 +273,7 @@ const registerApplicantOrganisation = async (req, res) => {
         applicant.mobile_no,
         type_of_connection,
         water_requirement,
-        APPLICATION_STATUS.APPLICATION_SUBMITTED,
+        isTransferApplication ? APPLICATION_STATUS.APPLICATION_SUBMITTED_FOR_TRANSFER : APPLICATION_STATUS.APPLICATION_SUBMITTED,
         property_proof,
         registration_proof,
         ownership_proof,
@@ -274,9 +295,9 @@ const registerApplicantOrganisation = async (req, res) => {
       application_id,                           // applicationId
       applicant.id,                             // userId      (who submitted)
       applicant.user_name,                      // userName
-      APPLICATION_STATUS.APPLICATION_SUBMITTED, // actionType  → current status
+      isTransferApplication ? APPLICATION_STATUS.APPLICATION_SUBMITTED_FOR_TRANSFER : APPLICATION_STATUS.APPLICATION_SUBMITTED, // actionType
       null,                                     // oldValue    → none on first submit
-      APPLICATION_STATUS.APPLICATION_SUBMITTED, // newValue    → status it became
+      isTransferApplication ? APPLICATION_STATUS.APPLICATION_SUBMITTED_FOR_TRANSFER : APPLICATION_STATUS.APPLICATION_SUBMITTED, // newValue
       "Application submitted by applicant",     // remarks
       client
     );
@@ -296,7 +317,7 @@ const divisionName = divisionResult.rows[0]?.division_name || "";
 
     await handleSlaOnStatusChange({
       applicationId: application_id,
-      newStatus: APPLICATION_STATUS.APPLICATION_SUBMITTED,
+      newStatus: isTransferApplication ? APPLICATION_STATUS.APPLICATION_SUBMITTED_FOR_TRANSFER : APPLICATION_STATUS.APPLICATION_SUBMITTED,
       actorUserId: applicant.id,
       assignedTo: null,
     });
@@ -448,7 +469,7 @@ const updateReturnedApplicantOrganisation = async (req, res) => {
       applicationId,
       applicant.id,
       applicant.user_name,
-      APPLICATION_STATUS.APPLICATION_SUBMITTED,
+      isTransferApplication ? APPLICATION_STATUS.APPLICATION_SUBMITTED_FOR_TRANSFER : APPLICATION_STATUS.APPLICATION_SUBMITTED,
       oldStatus,
       APPLICATION_STATUS.APPLICATION_SUBMITTED,
       "Returned application resubmitted by applicant",
@@ -468,7 +489,7 @@ const divisionResult = await pool.query(
 const divisionName = divisionResult.rows[0]?.division_name || "";
     await handleSlaOnStatusChange({
       applicationId,
-      newStatus: APPLICATION_STATUS.APPLICATION_SUBMITTED,
+      newStatus: isTransferApplication ? APPLICATION_STATUS.APPLICATION_SUBMITTED_FOR_TRANSFER : APPLICATION_STATUS.APPLICATION_SUBMITTED,
       actorUserId: applicant.id,
       assignedTo: null,
     });
@@ -502,7 +523,12 @@ const getApplicantApplicationCount = async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT COUNT(*) AS total FROM organisation WHERE applicant_user_id = $1`,
+      `
+        SELECT COUNT(DISTINCT application_id)::int AS total
+        FROM organisation
+        WHERE (applicant_user_id = $1 OR transfer_user_id = $1)
+          AND application_status <> 'CONNECTION_DISCONNECTED'
+      `,
       [userId]
     );
 
@@ -522,17 +548,238 @@ const getApplicantApplication = async (req, res) => {
     if (!userId) return res.status(400).json({ error: "User ID is required" });
 
     const result = await pool.query(
-      `SELECT application_id,name,gender,email,mobile_number, organisation_name, establishment_type,
-              district, block, gram_panchayat_code, gram_panchayat, village, habitation,
-              type_of_connection, water_requirement, application_status, created_at,
-              property_proof,
-    registration_proof,
-    ownership_proof,
-    owner_indemnity_bond,
-    identity_proof
-       FROM organisation
-       WHERE applicant_user_id = $1
-       ORDER BY created_at DESC LIMIT 1`,
+            `SELECT current.application_id, current.original_application_id,
+              current.transfer_user_flag, current.transfer_user_id,
+              COALESCE(original.application_id, current.application_id) AS connection_application_id,
+              COALESCE(original.application_status, current.application_status) AS connection_application_status,
+              COALESCE(original.consumer_id, current.consumer_id) AS consumer_id,
+              original.organisation_name AS connection_organisation_name,
+              original.establishment_type AS connection_establishment_type,
+              original.type_of_connection AS connection_type_of_connection,
+              original.water_requirement AS connection_water_requirement,
+              original.district_code AS connection_district_code,
+              original.block_code AS connection_block_code,
+              original.gram_panchayat_code AS connection_gram_panchayat_code,
+              original.district AS connection_district,
+              original.block AS connection_block,
+              original.gram_panchayat AS connection_gram_panchayat,
+              original.village AS connection_village,
+              original.habitation AS connection_habitation,
+              original.created_at AS connection_created_at,
+              original.property_proof AS connection_property_proof,
+              original.registration_proof AS connection_registration_proof,
+              original.ownership_proof AS connection_ownership_proof,
+              original.owner_indemnity_bond AS connection_owner_indemnity_bond,
+              original.identity_proof AS connection_identity_proof,
+              (
+                SELECT request.application_status
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'CANCELLATION'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS cancellation_request_status,
+              (
+                SELECT request.application_id
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'CANCELLATION'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS cancellation_request_application_id,
+              (
+                SELECT request.created_at
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'CANCELLATION'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS cancellation_request_created_at,
+              (
+                SELECT request.request_reason
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'CANCELLATION'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS cancellation_request_reason,
+              (
+                SELECT request.preferred_disconnection_date
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'CANCELLATION'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS cancellation_preferred_disconnection_date,
+              (
+                SELECT request.outstanding_tariff_paid
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'CANCELLATION'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS cancellation_outstanding_tariff_paid,
+              (
+                SELECT request.property_proof
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'CANCELLATION'
+                ORDER BY request.created_at DESC LIMIT 1
+              ) AS cancellation_property_proof,
+              (
+                SELECT request.registration_proof
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'CANCELLATION'
+                ORDER BY request.created_at DESC LIMIT 1
+              ) AS cancellation_registration_proof,
+              (
+                SELECT request.ownership_proof
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'CANCELLATION'
+                ORDER BY request.created_at DESC LIMIT 1
+              ) AS cancellation_ownership_proof,
+              (
+                SELECT request.owner_indemnity_bond
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'CANCELLATION'
+                ORDER BY request.created_at DESC LIMIT 1
+              ) AS cancellation_owner_indemnity_bond,
+              (
+                SELECT request.identity_proof
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'CANCELLATION'
+                ORDER BY request.created_at DESC LIMIT 1
+              ) AS cancellation_identity_proof,
+              (
+                SELECT request.application_status
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'AMENDMENT'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS amendment_request_status,
+              (
+                SELECT request.application_id
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'AMENDMENT'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS amendment_request_application_id,
+              (
+                SELECT request.created_at
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'AMENDMENT'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS amendment_request_created_at,
+              (
+                SELECT request.new_organisation_name
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'AMENDMENT'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS amendment_new_organisation_name,
+              (
+                SELECT request.new_establishment_type
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'AMENDMENT'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS amendment_new_establishment_type,
+              (
+                SELECT request.new_type_of_connection
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'AMENDMENT'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS amendment_new_type_of_connection,
+              (
+                SELECT request.new_water_requirement
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'AMENDMENT'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS amendment_new_water_requirement,
+              (
+                SELECT request.amendment_reason
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'AMENDMENT'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS amendment_reason,
+              (
+                SELECT request.property_proof
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'AMENDMENT'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS amendment_property_proof,
+              (
+                SELECT request.registration_proof
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'AMENDMENT'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS amendment_registration_proof,
+              (
+                SELECT request.ownership_proof
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'AMENDMENT'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS amendment_ownership_proof,
+              (
+                SELECT request.owner_indemnity_bond
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'AMENDMENT'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS amendment_owner_indemnity_bond,
+              (
+                SELECT request.identity_proof
+                FROM organisation request
+                WHERE request.original_application_id = COALESCE(original.application_id, current.application_id)
+                  AND request.request_type = 'AMENDMENT'
+                ORDER BY request.created_at DESC
+                LIMIT 1
+              ) AS amendment_identity_proof,
+              current.request_type,
+              current.name,current.gender,current.email,current.mobile_number,
+              current.organisation_name, current.establishment_type,
+              current.district_code, current.block_code,
+              current.district, current.block, current.gram_panchayat_code,
+              current.gram_panchayat, current.village, current.habitation,
+              current.type_of_connection, current.water_requirement,
+              current.transfer_user_flag, current.transfer_user_id, current.transfer_user_name,
+              current.transfer_user_mobile, current.transfer_user_email, current.transfer_user_gender,
+              current.transfer_user_organisation,
+              current.application_status, current.created_at,
+              current.new_organisation_name, current.new_establishment_type,
+              current.new_type_of_connection, current.new_water_requirement,
+              current.property_proof, current.registration_proof,
+              current.ownership_proof, current.owner_indemnity_bond,
+              current.identity_proof
+       FROM organisation current
+       LEFT JOIN organisation original
+         ON original.application_id = current.original_application_id
+       WHERE current.applicant_user_id = $1
+         OR current.transfer_user_id = $1
+       ORDER BY current.created_at DESC LIMIT 1`,
       [userId]
     );
 

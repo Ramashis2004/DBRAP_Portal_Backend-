@@ -49,6 +49,66 @@ const STATUS_META = [
     label: "No. of Applications Pending for Connection Details Updated",
     colorKey: "teal",
   },
+  {
+    status: "PAYMENT_RECEIPT_UPLOADED_FOR_CANCELLATION",
+    label: "No. of Cancellation Payments Pending for JE Verification",
+    colorKey: "orange",
+  },
+  {
+    status: "PAYMENT_RECEIPT_VERIFIED_FOR_CANCELLATION",
+    label: "No. of Cancellation Payments Pending for Disconnection",
+    colorKey: "green",
+  },
+  {
+    status: "APPLICATION_SUBMITTED_FOR_CANCELLATION",
+    label: "No. of Cancellation Applications Pending for Forward to JE",
+    colorKey: "blue",
+  },
+  {
+    status: "CANCELLATION_FORWARDED_TO_JE",
+    label: "No. of Cancellation Applications Pending for Site Inspection",
+    colorKey: "amber",
+  },
+  {
+    status: "CANCELLATION_SITE_VISIT_REPORT_UPLOADED",
+    label: "No. of Cancellation Applications Pending for Approval",
+    colorKey: "purple",
+  },
+  {
+    status: "CANCELLATION_APPROVED",
+    label: "No. of Cancellation Applications Pending for Money Receipt Upload",
+    colorKey: "orange",
+  },
+  {
+    status: "DISCONNECTION_INSTRUCTION_ASSIGNED_TO_JE",
+    label: "No. of Cancellation Applications Pending for Disconnection",
+    colorKey: "orange",
+  },
+  {
+    status: "APPLICATION_SUBMITTED_FOR_AMENDMENT",
+    label: "No. of Amendment Applications Pending for Forward to JE",
+    colorKey: "blue",
+  },
+  {
+    status: "AMENDMENT_FORWARDED_TO_JE",
+    label: "No. of Amendment Applications Pending for Verification",
+    colorKey: "amber",
+  },
+  {
+    status: "AMENDMENT_DOCUMENTS_VERIFIED_BY_JE",
+    label: "No. of Amendment Applications Pending for Approval",
+    colorKey: "purple",
+  },
+  {
+    status: "AMENDMENT_APPROVED",
+    label: "No. of Amendment Applications Pending for Connection Update",
+    colorKey: "orange",
+  },
+  {
+    status: "CONNECTION_DISCONNECTED",
+    label: "No. of Applications Approved and Disconnected",
+    colorKey: "green",
+  },
   
 ];
 

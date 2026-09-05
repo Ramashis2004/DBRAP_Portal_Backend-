@@ -98,28 +98,24 @@ app.use(
         fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
         imgSrc: ["'self'", "data:", "blob:"],
         connectSrc: [
-          "'self'",
-          "http://localhost:*",
-          "http://127.0.0.1:*",
-          "http://10.172.32.252:*",
-          "ws:",
-          "wss:"
+           "'self'","blob:"
+          // "http://127.0.0.1:*",
+          // "http://10.172.32.252:*",
+          // "ws:",
+          // "wss:"
         ],
         mediaSrc: ["'self'"],
         workerSrc: ["'self'", "blob:"],
         formAction: ["'self'"],
         // ALLOW PDF VIEWERS AND IFRAME EMBEDS
-        objectSrc: ["'self'"],
-        frameSrc: ["'self'"],
-        frameAncestors: [
-          "'self'",
-          "http://localhost:*",
-          "http://127.0.0.1:*",
-          "http://10.172.32.252:*"
-        ]
+        objectSrc: ["'none'"],
+        frameSrc: ["'self'", "blob:"],
+       
+        frameAncestors: ["'none'"],
+        requireTrustedTypesFor: ["'script'"],
       }
     },
-    crossOriginEmbedderPolicy: false,
+    crossOriginEmbedderPolicy: true,
     crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
     crossOriginResourcePolicy: { policy: "cross-origin" },
     noSniff: true
@@ -188,7 +184,13 @@ app.use((err, req, res, next) => {
 
 // Serve frontend static files in production
 const frontendDistPath = path.join(__dirname, "../../frontend/DBRAP_Portal_Frontend/dist");
-app.use(express.static(frontendDistPath));
+app.use(express.static(frontendDistPath, {
+  setHeaders: (res, filePath) => {
+    if (path.basename(filePath) === "index.html") {
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    }
+  },
+}));
 
 // Wildcard route to handle React Router client-side routing
 app.get(/.*/, (req, res, next) => {
@@ -227,7 +229,28 @@ const ensureOrganisationSchema = async () => {
     "PAYMENT_RECEIPT_UPLOADED",
     "PAYMENT_RECEIPT_VERIFIED",
     "PAYMENT_RECEIPT_REJECTED",
+    "PAYMENT_RECEIPT_UPLOADED_FOR_CANCELLATION",
+    "PAYMENT_RECEIPT_VERIFIED_FOR_CANCELLATION",
+    "PAYMENT_RECEIPT_REJECTED_FOR_CANCELLATION",
     "CONNECTION_DETAILS_UPDATED",
+    //"UPDTAED_CONNECTION_DETAILS",
+    "APPLICATION_SUBMITTED_FOR_CANCELLATION",
+    "APPLICATION_SUBMITTED_FOR_TRANSFER",
+    "TRANSFER_FORWARDED_TO_JE",
+    "TRANSFER_SITE_VISIT_REPORT_UPLOADED",
+    "TRANSFER_APPROVED",
+    "PAYMENT_RECEIPT_UPLOADED_FOR_TRANSFER",
+    "PAYMENT_RECEIPT_VERIFIED_FOR_TRANSFER",
+    "PAYMENT_RECEIPT_REJECTED_FOR_TRANSFER",
+    "CANCELLATION_FORWARDED_TO_JE",
+    "CANCELLATION_SITE_VISIT_REPORT_UPLOADED",
+    "CANCELLATION_APPROVED",
+    "DISCONNECTION_INSTRUCTION_ASSIGNED_TO_JE",
+    "CONNECTION_DISCONNECTED",
+    "APPLICATION_SUBMITTED_FOR_AMENDMENT",
+    "AMENDMENT_FORWARDED_TO_JE",
+    "AMENDMENT_DOCUMENTS_VERIFIED_BY_JE",
+    "AMENDMENT_APPROVED",
   ];
 
   for (const status of applicationStatuses) {
@@ -237,6 +260,16 @@ const ensureOrganisationSchema = async () => {
   await pool.query(`
     ALTER TABLE organisation
     ADD COLUMN IF NOT EXISTS application_id TEXT
+  `);
+
+  await pool.query(`
+    ALTER TABLE organisation
+    ADD COLUMN IF NOT EXISTS consumer_id TEXT
+  `);
+
+  await pool.query(`
+    ALTER TABLE organisation
+    ADD COLUMN IF NOT EXISTS original_application_id TEXT
   `);
 
   await pool.query(`
@@ -258,6 +291,33 @@ const ensureOrganisationSchema = async () => {
     ALTER TABLE organisation
     ADD COLUMN IF NOT EXISTS panchayat_code TEXT
   `);
+
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS request_type TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS request_reason TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS preferred_disconnection_date DATE`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS outstanding_tariff_paid TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS new_organisation_name TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS new_establishment_type TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS new_contact_person TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS new_mobile_number TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS new_type_of_connection TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS new_water_requirement TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS amendment_reason TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS inspection_date DATE`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS inspection_time TIME`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS site_visit_report_upload_on TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS forward_on TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS approved_on TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS disconnection_date DATE`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS disconnection_remarks TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS transfer_user_flag BOOLEAN NOT NULL DEFAULT false`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS transfer_user_id TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS transfer_user_name TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS transfer_user_mobile TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS transfer_user_email TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS transfer_user_gender TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS transfer_user_organisation TEXT`);
+  await pool.query(`ALTER TABLE organisation ADD COLUMN IF NOT EXISTS transfer_source_application_id TEXT`);
 
   await pool.query(`
     UPDATE organisation
@@ -297,6 +357,17 @@ const ensureOrganisationSchema = async () => {
   `);
 
   await pool.query(`
+    DROP INDEX IF EXISTS organisation_consumer_id_idx
+  `);
+
+  await pool.query(`
+    CREATE UNIQUE INDEX organisation_consumer_id_idx
+    ON organisation (consumer_id)
+    WHERE original_application_id IS NULL
+      AND consumer_id IS NOT NULL
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS dbrap_payment_details (
       id BIGSERIAL PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -325,6 +396,10 @@ const ensureOrganisationSchema = async () => {
       applicant_role_id INTEGER := 7;
       application_menu_id INTEGER;
       apply_option_id INTEGER;
+      cancel_option_id INTEGER;
+      amend_option_id INTEGER;
+      je_role_id INTEGER;
+      je_option_id INTEGER;
     BEGIN
       INSERT INTO dbrap_role (role_id, role_name, role_desc, status, abbr)
       SELECT applicant_role_id, 'Applicant', 'Applicant', true, 'APP'
@@ -380,6 +455,104 @@ const ensureOrganisationSchema = async () => {
         SELECT 1 FROM dbrap_role_options_mapping
         WHERE role_id = applicant_role_id AND option_id = apply_option_id
       );
+
+      SELECT option_id
+      INTO cancel_option_id
+      FROM dbrap_options
+      WHERE LOWER(option_name) IN ('apply for cancellation', 'apply for cancellation/transfer')
+        AND menu_id = application_menu_id
+      LIMIT 1;
+
+      IF cancel_option_id IS NULL THEN
+        SELECT COALESCE(MAX(option_id), 0) + 1 INTO cancel_option_id FROM dbrap_options;
+        INSERT INTO dbrap_options (
+          option_id, menu_id, option_name, option_description, option_url, priority, status
+        )
+        VALUES (
+          cancel_option_id,
+          application_menu_id,
+          'Apply For Cancellation/Transfer',
+          'Apply for cancellation or surrender of water connection',
+          '/applicant-cancellation',
+          '2',
+          true
+        );
+      END IF;
+
+      INSERT INTO dbrap_role_options_mapping (role_id, option_id, status)
+      SELECT applicant_role_id, cancel_option_id, true
+      WHERE NOT EXISTS (
+        SELECT 1 FROM dbrap_role_options_mapping
+        WHERE role_id = applicant_role_id AND option_id = cancel_option_id
+      );
+
+      SELECT option_id
+      INTO amend_option_id
+      FROM dbrap_options
+      WHERE LOWER(option_name) IN ('apply for amendment', 'apply for ammendment')
+        AND menu_id = application_menu_id
+      LIMIT 1;
+
+      IF amend_option_id IS NULL THEN
+        SELECT COALESCE(MAX(option_id), 0) + 1 INTO amend_option_id FROM dbrap_options;
+        INSERT INTO dbrap_options (
+          option_id, menu_id, option_name, option_description, option_url, priority, status
+        )
+        VALUES (
+          amend_option_id,
+          application_menu_id,
+          'Apply For Ammendment',
+          'Apply for amendment of name or organisation details',
+          '/applicant-amendment',
+          '3',
+          true
+        );
+      END IF;
+
+      INSERT INTO dbrap_role_options_mapping (role_id, option_id, status)
+      SELECT applicant_role_id, amend_option_id, true
+      WHERE NOT EXISTS (
+        SELECT 1 FROM dbrap_role_options_mapping
+        WHERE role_id = applicant_role_id AND option_id = amend_option_id
+      );
+
+      SELECT role_id INTO je_role_id
+      FROM dbrap_role
+      WHERE role_id = 4
+         OR LOWER(role_name) LIKE '%junior engineer%'
+         OR LOWER(role_name) LIKE '%je%'
+      ORDER BY CASE WHEN role_id = 4 THEN 0 ELSE 1 END, role_id
+      LIMIT 1;
+
+      IF application_menu_id IS NOT NULL AND je_role_id IS NOT NULL THEN
+        SELECT option_id INTO je_option_id
+        FROM dbrap_options
+        WHERE LOWER(option_name) = 'disconnect water connection'
+          AND menu_id = application_menu_id
+        LIMIT 1;
+
+        IF je_option_id IS NULL THEN
+          SELECT COALESCE(MAX(option_id), 0) + 1 INTO je_option_id FROM dbrap_options;
+          INSERT INTO dbrap_options (
+            option_id, menu_id, option_name, option_description, option_url, priority, status
+          ) VALUES (
+            je_option_id,
+            application_menu_id,
+            'Disconnect Water Connection',
+            'Disconnect water connection after cancellation approval',
+            '/je-disconnect-connection',
+            '4',
+            true
+          );
+        END IF;
+
+        INSERT INTO dbrap_role_options_mapping (role_id, option_id, status)
+        SELECT je_role_id, je_option_id, true
+        WHERE NOT EXISTS (
+          SELECT 1 FROM dbrap_role_options_mapping
+          WHERE role_id = je_role_id AND option_id = je_option_id
+        );
+      END IF;
     END $func$;
   `);
 
@@ -457,27 +630,8 @@ const ensureOrganisationSchema = async () => {
   `);
 
   await pool.query(`
-    DO $func$
-    BEGIN
-      IF EXISTS (
-        SELECT 1
-        FROM information_schema.tables
-        WHERE table_schema = 'public'
-          AND table_name = 'organisation'
-      ) THEN
-        IF NOT EXISTS (
-          SELECT 1
-          FROM pg_constraint
-          WHERE conname = 'sla_tracking_application_id_fk'
-        ) THEN
-          ALTER TABLE sla_tracking
-          ADD CONSTRAINT sla_tracking_application_id_fk
-          FOREIGN KEY (application_id)
-          REFERENCES organisation(application_id)
-          ON DELETE CASCADE;
-        END IF;
-      END IF;
-    END $func$;
+    ALTER TABLE sla_tracking
+    DROP CONSTRAINT IF EXISTS sla_tracking_application_id_fk
   `);
 
   // Create application_history table

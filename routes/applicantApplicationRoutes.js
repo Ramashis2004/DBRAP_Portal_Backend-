@@ -9,6 +9,9 @@ const {
   getApplicantApplication,
   
 } = require("../controllers/applicantApplicationController");
+const {
+  submitApplicantServiceRequest,
+} = require("../controllers/applicantServiceRequestController");
 const { checkSessionValid } = require("../controllers/authController");
 const router = express.Router();
 
@@ -38,5 +41,16 @@ router.patch(
 );
 router.get("/application-count/:userId", getApplicantApplicationCount);
 router.get("/application/:userId", getApplicantApplication);
+router.post(
+  "/service-request",
+  upload.fields([
+    { name: "property_proof", maxCount: 1 },
+    { name: "registration_proof", maxCount: 1 },
+    { name: "ownership_proof", maxCount: 1 },
+    { name: "owner_indemnity_bond", maxCount: 1 },
+    { name: "identity_proof", maxCount: 1 },
+  ]),
+  submitApplicantServiceRequest
+);
 router.get("/check-session", checkSessionValid);
 module.exports = router;

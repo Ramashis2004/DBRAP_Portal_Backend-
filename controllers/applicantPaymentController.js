@@ -33,6 +33,7 @@ const getApplicantApplication = async (applicantUserId) => {
        remarks
      FROM organisation
      WHERE applicant_user_id = $1
+        OR transfer_user_id = $1
      ORDER BY created_at DESC
      LIMIT 1`,
     [String(applicantUserId)]
@@ -85,7 +86,7 @@ const uploadApplicantPaymentReceipt = async (req, res) => {
       `SELECT application_id, application_status::TEXT, payment_rejection_count
        FROM organisation
        WHERE application_id    = $1
-         AND applicant_user_id = $2
+         AND (applicant_user_id = $2 OR transfer_user_id = $2)
        LIMIT 1`,
       [applicationId, userId]
     );
@@ -100,9 +101,14 @@ const uploadApplicantPaymentReceipt = async (req, res) => {
     // Only allow upload when:
     //   • First time → APPLICATION_APPROVED
     //   • Re-upload  → PAYMENT_RECEIPT_REJECTED (first rejection only, count === 1)
+    //   • Cancellation approval flow → CANCELLATION_APPROVED
     const allowedUploadStatuses = [
       APPLICATION_STATUS.APPLICATION_APPROVED,
       APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED,
+      APPLICATION_STATUS.CANCELLATION_APPROVED,
+      APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED_FOR_CANCELLATION,
+      APPLICATION_STATUS.TRANSFER_APPROVED,
+      APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED_FOR_TRANSFER,
     ];
 
     if (!allowedUploadStatuses.includes(currentStatus)) {
@@ -114,13 +120,19 @@ const uploadApplicantPaymentReceipt = async (req, res) => {
     // Guard: if rejected twice the status is APPLICATION_REJECTED, blocked above.
     // Extra safety check in case of data inconsistency.
     if (
-      currentStatus === APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED &&
+      (currentStatus === APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED || currentStatus === APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED_FOR_CANCELLATION) &&
       rejectionCount >= 2
     ) {
       return res.status(400).json({
         error: "Application has been permanently rejected. Re-upload is not allowed.",
       });
     }
+
+    const newStatus = currentStatus === APPLICATION_STATUS.TRANSFER_APPROVED || currentStatus === APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED_FOR_TRANSFER
+      ? APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED_FOR_TRANSFER
+      : currentStatus === APPLICATION_STATUS.CANCELLATION_APPROVED || currentStatus === APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED_FOR_CANCELLATION
+      ? APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED_FOR_CANCELLATION
+      : APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED;
 
     const receiptPath = req.file.path;
 
@@ -136,14 +148,14 @@ const uploadApplicantPaymentReceipt = async (req, res) => {
          money_receipt_verify_on = NULL,
          update_on               = NOW()
        WHERE application_id    = $4
-         AND applicant_user_id = $5`,
+         AND (applicant_user_id = $5 OR transfer_user_id = $5)`,
       [
         amount,
         dateOfPayment,
         receiptPath,
         applicationId,
         userId,
-        APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED,
+        newStatus,
       ]
     );
 
@@ -152,23 +164,25 @@ const uploadApplicantPaymentReceipt = async (req, res) => {
       applicationId,
       userId,
       null,
-      APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED,
+      newStatus,
       currentStatus,
-      APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED,
+      newStatus,
       rejectionCount >= 1 ? "Re-uploaded after JE rejection" : null
     );
 
     await handleSlaOnStatusChange({
       applicationId,
-      newStatus:   APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED,
+      newStatus,
       actorUserId: userId,
       assignedTo:  null,
     });
 
     // Trigger Odisha One API-4 server-to-server push for PAYMENT_RECEIPT_UPLOADED
-    triggerApi4OnSubmit(applicationId, "", APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED).catch((err) => {
-      console.error("API-4 PAYMENT_RECEIPT_UPLOADED push error:", err.message);
-    });
+    if (newStatus === APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED) {
+      triggerApi4OnSubmit(applicationId, "", APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED).catch((err) => {
+        console.error("API-4 PAYMENT_RECEIPT_UPLOADED push error:", err.message);
+      });
+    }
 
     return res.json({
       message: "Payment receipt uploaded successfully.",

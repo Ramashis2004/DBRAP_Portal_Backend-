@@ -72,10 +72,14 @@ const getPaymentVerificationApplications = async (req, res) => {
           ON um.id = $1
          AND um.user_type_id = 4
          AND COALESCE(um.block_code::text, '') = COALESCE(o.block_code::text, '')
-        WHERE o.application_status = $2
+        WHERE o.application_status = ANY($2::text[])
         ORDER BY o.money_receipt_upload_on DESC NULLS LAST
       `,
-      [userId, APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED]
+      [userId, [
+        APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED,
+        APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED_FOR_CANCELLATION,
+        APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED_FOR_TRANSFER,
+      ]]
     );
 
     return res.status(200).json(result.rows);
@@ -96,15 +100,6 @@ const verifyPayment = async (req, res) => {
     return res.status(400).json({ error: "Action is required" });
   }
 
-  const allowedActions = [
-    APPLICATION_STATUS.PAYMENT_RECEIPT_VERIFIED,
-    APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED,
-  ];
-
-  if (!allowedActions.includes(action)) {
-    return res.status(400).json({ error: "Invalid action", allowedActions });
-  }
-
   try {
     // ── Fetch current state ────────────────────────────────────────────────
     const currentResult = await pool.query(
@@ -119,15 +114,41 @@ const verifyPayment = async (req, res) => {
       return res.status(404).json({ error: "Application not found" });
     }
 
+    const currentStatus = String(currentResult.rows[0]?.application_status || "");
+    const allowedActions = currentStatus === APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED_FOR_TRANSFER
+      ? [APPLICATION_STATUS.PAYMENT_RECEIPT_VERIFIED_FOR_TRANSFER, APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED_FOR_TRANSFER]
+      : currentStatus === APPLICATION_STATUS.PAYMENT_RECEIPT_UPLOADED_FOR_CANCELLATION
+      ? [
+          APPLICATION_STATUS.PAYMENT_RECEIPT_VERIFIED_FOR_CANCELLATION,
+          APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED_FOR_CANCELLATION,
+        ]
+      : [
+          APPLICATION_STATUS.PAYMENT_RECEIPT_VERIFIED,
+          APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED,
+        ];
+
+    if (!allowedActions.includes(action)) {
+      return res.status(400).json({ error: "Invalid action", allowedActions });
+    }
+
+    if (currentResult.rowCount === 0) {
+      return res.status(404).json({ error: "Application not found" });
+    }
+
     const oldStatus       = currentResult.rows[0].application_status;
     const rejectionCount  = Number(currentResult.rows[0].payment_rejection_count) || 0;
 
     // ── Determine final status ─────────────────────────────────────────────
-    // If JE rejects AND this is already the 1st rejection (count >= 1),
-    // permanently reject the application.
     let finalStatus = action;
-    if (action === APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED && rejectionCount >= 1) {
-      finalStatus = APPLICATION_STATUS.APPLICATION_REJECTED;
+    if (
+      (action === APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED || action === APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED_FOR_CANCELLATION || action === APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED_FOR_TRANSFER) &&
+      rejectionCount >= 1
+    ) {
+      finalStatus = action === APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED_FOR_TRANSFER
+        ? APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED_FOR_TRANSFER
+        : action === APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED_FOR_CANCELLATION
+        ? APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED_FOR_CANCELLATION
+        : APPLICATION_STATUS.APPLICATION_REJECTED;
     }
 
     // ── Update organisation ────────────────────────────────────────────────
@@ -138,15 +159,13 @@ const verifyPayment = async (req, res) => {
           application_status       = $1::varchar,
           update_on                = NOW(),
           remarks                  = COALESCE($3::varchar, remarks),
-          -- increment count only on a rejection action (not on permanent reject)
           payment_rejection_count  = CASE
-            WHEN $4::varchar = $5::varchar
+            WHEN $4::varchar IN ($5::varchar, $7::varchar, $9::varchar)
             THEN COALESCE(payment_rejection_count, 0) + 1
             ELSE payment_rejection_count
           END,
-          -- clear verify timestamp when rejecting so re-upload is clean
           money_receipt_verify_on  = CASE
-            WHEN $1::varchar = $6::varchar THEN NOW()
+            WHEN $1::varchar IN ($6::varchar, $8::varchar, $10::varchar) THEN NOW()
             ELSE money_receipt_verify_on
           END
         WHERE application_id = $2
@@ -159,12 +178,16 @@ const verifyPayment = async (req, res) => {
           payment_rejection_count
       `,
       [
-        finalStatus,                                          // $1 – new status
-        applicationId,                                        // $2
-        remarks || null,                                      // $3 – remark text
-        action,                                               // $4 – what JE chose
-        APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED,         // $5 – rejection constant
-        APPLICATION_STATUS.PAYMENT_RECEIPT_VERIFIED,          // $6 – verified constant
+        finalStatus,
+        applicationId,
+        remarks || null,
+        action,
+        APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED,
+        APPLICATION_STATUS.PAYMENT_RECEIPT_VERIFIED,
+        APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED_FOR_CANCELLATION,
+        APPLICATION_STATUS.PAYMENT_RECEIPT_VERIFIED_FOR_CANCELLATION,
+        APPLICATION_STATUS.PAYMENT_RECEIPT_REJECTED_FOR_TRANSFER,
+        APPLICATION_STATUS.PAYMENT_RECEIPT_VERIFIED_FOR_TRANSFER,
       ]
     );
 
@@ -192,9 +215,12 @@ const verifyPayment = async (req, res) => {
     });
 
     // Trigger API-9 for Odisha One when PAYMENT_RECEIPT_VERIFIED
-    if (finalStatus === APPLICATION_STATUS.PAYMENT_RECEIPT_VERIFIED) {
+    if (
+      finalStatus === APPLICATION_STATUS.PAYMENT_RECEIPT_VERIFIED ||
+      finalStatus === APPLICATION_STATUS.PAYMENT_RECEIPT_VERIFIED_FOR_CANCELLATION
+    ) {
       pushApplicationStatusToOdishaOne(applicationId, finalStatus, remarks || "").catch((err) => {
-        console.error("API-9 PAYMENT_RECEIPT_VERIFIED push error:", err.message);
+        console.error("API-9 payment verification push error:", err.message);
       });
     }
 
