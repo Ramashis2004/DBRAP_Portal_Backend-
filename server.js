@@ -117,7 +117,7 @@ app.use(
     },
     crossOriginEmbedderPolicy: true,
     crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
-    crossOriginResourcePolicy: { policy: "cross-origin" },
+    crossOriginResourcePolicy: { policy: "same-origin" },
     noSniff: true
   })
 );
@@ -183,7 +183,13 @@ app.use((err, req, res, next) => {
 });
 
 // Serve frontend static files in production
-const frontendDistPath = path.join(__dirname, "../../frontend/DBRAP_Portal_Frontend/dist");
+//const frontendDistPath = path.join(__dirname, "../../frontend/DBRAP_Portal_Frontend/dist");
+
+const frontendDistPath = path.resolve(
+  __dirname,
+  process.env.FRONTEND_DIST_PATH
+);
+
 app.use(express.static(frontendDistPath, {
   setHeaders: (res, filePath) => {
     if (path.basename(filePath) === "index.html") {
