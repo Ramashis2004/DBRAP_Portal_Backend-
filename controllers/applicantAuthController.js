@@ -23,8 +23,23 @@ const OTP_MAX_SEND_ATTEMPTS   = 3;
 const OTP_RESEND_LOCKOUT_MS   = 30 * 60 * 1000;
 const OTP_MAX_VERIFY_ATTEMPTS = 5;
 
-const generateOtp = () =>
-  String(Math.floor(Math.random() * 10 ** OTP_MAX_DIGITS)).padStart(OTP_MAX_DIGITS, "0");
+// ── Blackbox/E2E testing support ───────────────────────────────────────────────
+// Set LOGIN_TEST_MODE=true in a backend .env.test / .env.local file that only
+// your staging/test deployment loads — NEVER in production env config.
+//
+// When enabled, every OTP issued is the fixed value below instead of random,
+// and the actual SMS dispatch is skipped. The full verification path
+// (storage, expiry, attempt limits, resend cooldown, timing-safe compare)
+// is otherwise untouched — a test script still has to call sendApplicantOtp
+// and then submit the OTP to loginApplicant like a real client would; it
+// just doesn't need to read an SMS to know what the value is.
+const TEST_MODE_OTP = "000000";
+const isLoginTestModeEnabled = () => process.env.LOGIN_TEST_MODE === "true";
+
+const generateOtp = () => {
+  if (isLoginTestModeEnabled()) return TEST_MODE_OTP;
+  return String(Math.floor(Math.random() * 10 ** OTP_MAX_DIGITS)).padStart(OTP_MAX_DIGITS, "0");
+};
 
 const timingSafeEqualStrings = (a, b) => {
   const bufA = Buffer.from(String(a));
@@ -164,7 +179,8 @@ const sendApplicantOtp = async (req, res) => {
     const resendAvailableAt = isLockedOutAfterThisSend ? now + OTP_RESEND_LOCKOUT_MS : now + OTP_RESEND_COOLDOWN_MS;
 
     const otp = generateOtp();
-    // Never log or return the OTP value itself.
+    // Never log or return the OTP value itself (except the fixed, publicly
+    // documented TEST_MODE_OTP constant used when LOGIN_TEST_MODE is on).
 
     applicantOtpStore.set(trimmedMobile, {
       otp,
@@ -181,11 +197,15 @@ const sendApplicantOtp = async (req, res) => {
     }, OTP_TTL_MS);
 
     let smsSent = true;
-    try {
-      await sendOTPSMS(trimmedMobile, otp);
-    } catch (smsErr) {
-      smsSent = false;
-      console.error("Applicant login OTP SMS error:", smsErr.message);
+    if (isLoginTestModeEnabled()) {
+      console.log(`[LOGIN_TEST_MODE] Skipping SMS dispatch for ${trimmedMobile}; using fixed test OTP.`);
+    } else {
+      try {
+        await sendOTPSMS(trimmedMobile, otp);
+      } catch (smsErr) {
+        smsSent = false;
+        console.error("Applicant login OTP SMS error:", smsErr.message);
+      }
     }
 
     return res.status(200).json({
