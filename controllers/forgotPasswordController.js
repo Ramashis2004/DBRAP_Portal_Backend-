@@ -19,6 +19,20 @@ const SMS_ACTION         = process.env.SMS_OTP_ACTION     || "sendOTPSMS";
 const SMS_ENABLED        = process.env.SMS_ENABLED        !== "false";
 const SMS_TIMEOUT_MS     = Number(process.env.SMS_TIMEOUT_MS) || 10000;
 
+// ── Blackbox/E2E testing support ───────────────────────────────────────────────
+// Reuses the same LOGIN_TEST_MODE flag as the applicant OTP-login controller,
+// so one backend env var covers every OTP flow in the app. Set
+// LOGIN_TEST_MODE=true in a backend .env.test / .env.local file that only your
+// staging/test deployment loads — NEVER in production env config.
+//
+// When enabled: every OTP generated here is the fixed value below instead of
+// random, and the real SMS gateway call is skipped. The DB write, expiry,
+// resend cooldown/lockout, and verify-attempt limiting are all untouched — a
+// test script still has to call sendOtp and then verifyOtp/resetPassword like
+// a real client would; it just doesn't need to read an SMS to know the value.
+const TEST_MODE_OTP = "000000";
+const isLoginTestModeEnabled = () => process.env.LOGIN_TEST_MODE === "true";
+
 // ── In-memory OTP store ───────────────────────────────────────────────────────
 // Structure: {
 //   username → {
@@ -43,8 +57,10 @@ const OTP_RESEND_LOCKOUT_MS = 30 * 60 * 1000;
 const OTP_MAX_VERIFY_ATTEMPTS = 5;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-const generateOtp = () =>
-  String(Math.floor(Math.random() * 10 ** OTP_MAX_DIGITS)).padStart(OTP_MAX_DIGITS, "0");
+const generateOtp = () => {
+  if (isLoginTestModeEnabled()) return TEST_MODE_OTP;
+  return String(Math.floor(Math.random() * 10 ** OTP_MAX_DIGITS)).padStart(OTP_MAX_DIGITS, "0");
+};
 
 const normalizeMobile = (n) => String(n || "").trim().replace(/\D/g, "");
 
@@ -218,11 +234,15 @@ const sendOtp = async (req, res) => {
     }, OTP_TTL_MS);
 
     let smsSent = true;
-    try {
-      await sendOtpSms({ mobileNo, otp });
-    } catch (smsErr) {
-      smsSent = false;
-      console.error("Forgot-password SMS error:", smsErr.message);
+    if (isLoginTestModeEnabled()) {
+      console.log(`[LOGIN_TEST_MODE] Skipping SMS dispatch for officer "${trimmed}"; using fixed test OTP.`);
+    } else {
+      try {
+        await sendOtpSms({ mobileNo, otp });
+      } catch (smsErr) {
+        smsSent = false;
+        console.error("Forgot-password SMS error:", smsErr.message);
+      }
     }
 
     // Mask mobile: show last 4 digits only
