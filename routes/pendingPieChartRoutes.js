@@ -15,7 +15,7 @@ const {
   getEICPendingByDivision,
   getEICPendingApplicationsByDivision,
   getEICPendingApplicationHistory,
-} = require("../controllers/pendingPieChartController");
+} = require("../controllers/PendingpiechartController");
 
 // ── CE router ─────────────────────────────────────────────────────────────────
 const cePendingRouter = express.Router();

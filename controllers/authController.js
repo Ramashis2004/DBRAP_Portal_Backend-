@@ -1758,26 +1758,49 @@ const logoutOfficer = async (req, res) => {
     return res.status(500).json({ error: "Server Error" });
   }
 };
+// const checkSessionValid = async (req, res) => {
+//   try {
+//     const { userId } = req.query;
+//     if (!userId) return res.status(400).json({ error: "User ID is required" });
+
+//     const result = await pool.query(
+//       `SELECT is_logged FROM user_master WHERE id = $1 LIMIT 1`,
+//       [userId]
+//     );
+
+//     if (result.rows.length === 0) {
+//       return res.status(404).json({ valid: false });
+//     }
+
+//     return res.status(200).json({
+//       valid: result.rows[0].is_logged === true,
+//     });
+//   } catch (error) {
+//     console.error("checkSessionValid error:", error);
+//     return res.status(500).json({ error: "Server Error" });
+//   }
+// };
 const checkSessionValid = async (req, res) => {
   try {
-    const { userId } = req.query;
-    if (!userId) return res.status(400).json({ error: "User ID is required" });
-
-    const result = await pool.query(
-      `SELECT is_logged FROM user_master WHERE id = $1 LIMIT 1`,
-      [userId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ valid: false });
+    // authMiddleware has already verified the JWT
+    // and validated the login_history session.
+    if (!req.user) {
+      return res.status(401).json({
+        valid: false,
+        authenticated: false
+      });
     }
 
     return res.status(200).json({
-      valid: result.rows[0].is_logged === true,
+      valid: true,
+      authenticated: true
     });
+
   } catch (error) {
-    console.error("checkSessionValid error:", error);
-    return res.status(500).json({ error: "Server Error" });
+    return res.status(401).json({
+      valid: false,
+      authenticated: false
+    });
   }
 };
 module.exports = {

@@ -59,6 +59,22 @@ const resolveJeUploadStatus = (currentStatus) => {
 };
 
 const registerOrganisation = async (req, res) => {
+  // ── TEMP DEBUG: log incoming request/payload before anything else ──
+  console.log("── registerOrganisation HIT ──");
+  console.log("Content-Length header:", req.headers["content-length"]);
+
+  const debugFiles = req.files || {};
+  let debugTotalBytes = 0;
+  Object.entries(debugFiles).forEach(([field, arr]) => {
+    const f = arr?.[0];
+    if (f) {
+      console.log(`  ${field}: ${f.originalname} — ${f.size} bytes — saved to ${f.path}`);
+      debugTotalBytes += f.size;
+    }
+  });
+  console.log(`  TOTAL file bytes (server-side, post-multer): ${debugTotalBytes}`);
+  console.log("──────────────────────────────");
+  // ── END TEMP DEBUG ──
   const client = await pool.connect();
 
   try {
@@ -187,11 +203,40 @@ await saveApplicationHistory(
     });
 
   } catch (error) {
+    console.log("── registerOrganisation HIT ──");
+  console.log("Content-Length header:", req.headers["content-length"]);
+
+  const debugFiles = req.files || {};
+  let debugTotalBytes = 0;
+  Object.entries(debugFiles).forEach(([field, arr]) => {
+    const f = arr?.[0];
+    if (f) {
+      console.log(`  ${field}: ${f.originalname} — ${f.size} bytes — saved to ${f.path}`);
+      debugTotalBytes += f.size;
+    }
+  });
+  console.log(`  TOTAL file bytes (server-side, post-multer): ${debugTotalBytes}`);
+  console.log("──────────────────────────────");
     try {
       await client.query("ROLLBACK");
     } catch (rollbackError) {
       console.error("Rollback failed:", rollbackError);
+      console.log("── registerOrganisation HIT ──");
+  console.log("Content-Length header:", req.headers["content-length"]);
+
+  const debugFiles = req.files || {};
+  let debugTotalBytes = 0;
+  Object.entries(debugFiles).forEach(([field, arr]) => {
+    const f = arr?.[0];
+    if (f) {
+      console.log(`  ${field}: ${f.originalname} — ${f.size} bytes — saved to ${f.path}`);
+      debugTotalBytes += f.size;
     }
+  });
+  console.log(`  TOTAL file bytes (server-side, post-multer): ${debugTotalBytes}`);
+  console.log("──────────────────────────────");
+    }
+    
     console.error(error);
     res.status(500).json({ error: "Server Error" });
   } finally {
